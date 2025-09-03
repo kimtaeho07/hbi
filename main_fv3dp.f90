@@ -6,6 +6,8 @@ program main
   !use mod_derivs
   use mod_constant
   use m_HACApK_calc_entry_ij
+  !use toms715
+  !use Logarithmic_Integral
   implicit none
   include 'mpif.h'
 
@@ -59,19 +61,19 @@ program main
 
   real(8),allocatable::rdata(:),qvals(:,:),qtimes(:,:)
   integer,allocatable::iwell(:),jwell(:),kleng(:)
-  integer::lp,i,i_,j,k,kstart,kend,m,counts,interval,lrtrn,nl,ios,nmain,rk,nout(10),file_size,nwell
+  integer::lp,i,i_,j,k,kstart,kend,m,counts,interval,lrtrn,nl,ios,nmain,rk,nout(12),file_size,nwell
   integer::hypoloc(1),load,eventcount,thec,inloc,sw,errmaxloc,niter,mvelloc(1),locid(10)
 
   !controls
-  logical::aftershock,buffer,nuclei,slipping,outfield,slipevery,limitsigma,dcscale,slowslip,slipfinal,outpertime,switch
+  logical::aftershock,buffer,nuclei,slipping,outfield,slipevery,limitsigma,dcscale,slowslip,slipfinal,outpertime
   logical::initcondfromfile,parameterfromfile,injectionfromfile,backslip,sigmaconst,foward,inverse,geofromfile,restart,latticeh,pressuredependent,pfconst
-  character*128::fname,dum,law,input_file,problem,geofile,param,pvalue,slipmode,project,parameter_file,outdir,command,bcl,bcr,bcb,bct,bc,evlaw,setting
+  character*128::fname,dum,law,input_file,problem,geofile,param,pvalue,slipmode,project,parameter_file,outdir,command,bcl,bcr,bc,evlaw,setting
   character(128)::injection_file
-  real(8)::a0,a1,b0,dc0,sr,omega,theta,dtau,tiny,moment,wid,normal,ieta,meanmu,meanmuG,meandisp,meandispG,moment0,mvel,mvelG
-  real(8)::vref,vc0,mu0,onset_time,tr,vw0,fw0,velmin,tauinit,intau,trelax,maxnorm,maxnormG,minnorm,minnormG,sigmainit,muinit
+  real(8)::a0,a1,b0,dc0,sr,omega,theta,dtau,tiny,moment,wid,normal,ieta,meanmu,meanmuG,meandisp,meandispG,moment0,mvel,mvelG,mpf
+  real(8)::vc0,mu0,onset_time,tr,vw0,fw0,velmin,tauinit,intau,trelax,maxnorm,maxnormG,minnorm,minnormG,sigmainit,muinit
   real(8)::r,vpl,outv,xc,zc,dr,dx,dz,lapse,dlapse,vmaxeventi,sparam,tmax,dtmax,tout,dummy(10)
-  real(8)::ds0,amp,mui,velinit,phinit,velmax,maxsig,minsig,v1,dipangle,crake,s,sg,q0,tinj
-  real(8)::kpmax,kpmin,kp0,kT,kL,s0,ksinit,dtout,pfinit,pbc,pbcl,pbcr,lf,eta,beta,phi0,str,cc,td,cd
+  real(8)::ds0,amp,mui,velinit,phinit,velmax,maxsig,minsig,v1,dipangle,crake,s,sg,q0,vref
+  real(8)::kpmax,kpmin,kp0,kT,kL,s0,ksinit,dtout,pfinit,pbcl,pbcr,lf,eta,beta,phi0,str,cc,td,cd,pSig,rCol2,cDiff
 
   !random_number
   integer,allocatable::seed(:)
@@ -81,9 +83,26 @@ program main
   real(8)::x !time
   real(8),allocatable::y(:),yscal(:),dydx(:),yg(:)
   real(8)::eps_r,errmax_gb,dtinit,dtnxt,dttry,dtdid,dtmin,tp,fwid
+  real(8)::wfrac,Lfrac,Hfrac,Nfrac,Lfrac_sep,pinj
 
-  integer::r1,r2,r3,NVER,amari,out,kmax,loci,locj,loc,stat,nth,nn
+  integer::r1,r2,r3,NVER,amari,out,kmax,loci,locj,loc,stat,nth
   integer,allocatable::rupsG(:)
+
+  ! For fracture intersections and stimulation
+  character(10)::tempIntStr
+  character(128)::injStgFileName, delanoLocFileName
+  integer::numStages
+  integer,allocatable::stages(:),fracMeanPoints_x_idx(:),fracMeanPoints_z_idx_start(:),fracMeanPoints_z_idx_end(:)
+  real(8),allocatable::fracHeights(:),fracMeanPoints_x(:),fracMeanPoints_z(:),stimPressures(:),stimStartTimes(:),stimDurs(:)
+  real(8)::delanoLoc(2)
+  integer::delanoLoc_x_idx, delanoLoc_z_idx
+  logical,allocatable::stimStarted(:)
+  real(8)::tanh_alpha
+
+  type :: ArrayHolder
+      real, allocatable :: values(:)
+  end type ArrayHolder
+  type(ArrayHolder), allocatable :: pfBeforeStim(:)
 
   !initialize
   icomm=MPI_COMM_WORLD
@@ -91,18 +110,17 @@ program main
   call MPI_COMM_SIZE(MPI_COMM_WORLD,np,ierr )
   call MPI_COMM_RANK(MPI_COMM_WORLD,my_rank,ierr )
 
-  if(my_rank==0) then
-    write(*,*) 'HBI Fluid 3D ver. 2025.8.0'
-    write(*,*) '# of MPI', np
+  if(my_rank.eq.0) then
+    write(*,*) '# of MPI cores', np
   end if
   !input file must be specified when running
-  !example) mpirun -np 16 ./lhbiem default.in
+  !example) mpirun -np 16 ./ha.out default.in
   call get_command_argument(1,input_file,status=stat)
 
-  open(33,file=input_file,status='old',iostat=ios)
-  !if(my_rank==0) write(*,*) 'input_file',input_file
+  open(33,file=input_file,iostat=ios)
+  !if(my_rank.eq.0) write(*,*) 'input_file',input_file
   if(ios /= 0) then
-    if(my_rank==0)write(*,*) 'ERROR: Failed to open input file'
+    write(*,*) 'Failed to open inputfile'
     stop
   end if
 
@@ -115,24 +133,15 @@ program main
     !write(*,*) number
   end if
 
-  if(my_rank==0) then
-  outdir='output'
-  write(command, *) 'if [ ! -d ', trim(outdir), ' ]; then mkdir -p ', trim(outdir), '; fi'
-  !write(*, *) trim(command)
-  call system(command)
-  end if
-
   time1=MPI_Wtime()
 
   !default parameters
-  switch=.false.
-  setting="injection"
   nmain=1000000
   eps_r=1d-4
   eps_h=1d-4
-  vref=1e-6
   velmax=1d7
-  velmin=1d-20
+  velmin=1d-16
+  vref=1d-6
   tmax=1d12
   td=tmax
   dipangle=0d0
@@ -142,25 +151,17 @@ program main
   slipfinal=.false.
   restart=.false.
   maxsig=300d0
-  minsig=1d0
+  minsig=0d0
   dtinit=1d0
-  muinit=0d0
   tp=86400d0
-  dtmax=1e10
-  tinj=1e6
   outpertime=.false.
   initcondfromfile=.false.
   parameterfromfile=.false.
   injectionfromfile=.false.
   pressuredependent=.false.
   pfconst=.false.
-  bc='default'
-  bcb='Neumann'
-  bct='Neumann'
-  bcl='Neumann'
-  bcr='Neumann'
+  bc='Neumann'
   evlaw='aging'
-  nn=2
   !number=0
 
 
@@ -188,6 +189,8 @@ program main
       read (pvalue,*) velmax
     case('velmin')
       read (pvalue,*) velmin
+    case('vref')
+      read (pvalue,*) vref
     case('a')
       read (pvalue,*) a0
     case('a1')
@@ -222,12 +225,12 @@ program main
       read (pvalue,*) ksinit
     case('dtinit')
       read (pvalue,*) dtinit
+    case('dtmax')
+      read (pvalue,*) dtmax
     case('sparam')
       read (pvalue,*) sparam
     case('q0')
       read (pvalue,*) q0
-    case('tinj')
-      read (pvalue,*) tinj
     case('eta')
       read (pvalue,*) eta
     case('phi0')
@@ -250,16 +253,12 @@ program main
       read (pvalue,*) cd
     case('td')
       read (pvalue,*) td
-    case('pbc')
-      read (pvalue,*) pbc
     case('pbcl')
       read (pvalue,*) pbcl
     case('pbcr')
       read (pvalue,*) pbcr
     case('tmax')
       read (pvalue,*) tmax
-    case('dtmax')
-      read (pvalue,*) dtmax
     case('eps_r')
       read (pvalue,*) eps_r
     case('eps_h')
@@ -302,14 +301,6 @@ program main
       read(pvalue,*) parameterfromfile
     case('parameter_file')
       read(pvalue,'(a)') parameter_file
-    case('bcl')
-      read (pvalue,'(a)') bcl
-    case('bcr')
-      read (pvalue,'(a)') bcr
-    case('bct')
-      read (pvalue,'(a)') bct
-    case('bcb')
-      read (pvalue,'(a)') bcb
     case('bc')
       read (pvalue,'(a)') bc
     case('evlaw')
@@ -320,16 +311,32 @@ program main
       read(pvalue,*) injectionfromfile
     case('injection_file')
       read(pvalue,'(a)') injection_file
-    case default
-      if(my_rank==0) write(*,*) 'WARNING: ', param, 'is an unknown parameter'
+    case('pSig')
+      read(pvalue,*) pSig
+    case('fwid')
+      read(pvalue,*) fwid
+    case('wfrac')
+          read(pvalue,*) wfrac
+    case('fractureHalfLength')
+          read(pvalue,*) Lfrac
+    case('Hfrac')
+          read(pvalue,*) Hfrac
+    case('Nfrac')
+          read(pvalue,*) Nfrac
+    case('Lfrac_sep')
+          read(pvalue,*) Lfrac_sep
+    case('pinj')
+          read(pvalue,*) pinj
+    case('injStgFileName')
+          read(pvalue,*) injStgFileName
+    case('delanoLocationFileName')
+          read(pvalue,*) delanoLocFileName
+    case('tanh_alpha')
+          read(pvalue,*) tanh_alpha
     end select
   end do
   close(33)
   tmax=tmax*365*24*3600
-  if(bc .ne. 'default') then
-    bcl=bc;bcr=bc;bct=bc;bcb=bc
-    pbcl=pbc;pbcr=pbc
-  end if
 
   !limitsigma=.true.
   call MPI_BARRIER(MPI_COMM_WORLD,ierr)
@@ -389,13 +396,9 @@ program main
   !   allocate(taui(NCELLg),sigmai(NCELLg))
   case('3dp','3dph')
     allocate(xs1(NCELLg),xs2(NCELLg),xs3(NCELLg),xs4(NCELLg))
-    allocate(ys1(NCELLg),ys2(NCELLg),ys3(NCELLg),ys4(NCELLg))
     allocate(zs1(NCELLg),zs2(NCELLg),zs3(NCELLg),zs4(NCELLg))
-    allocate(ang(NCELLg),angd(NCELLg))
     xs1=0d0; xs2=0d0; xs3=0d0; xs4=0d0
-    ys1=0d0; ys2=0d0; ys3=0d0; ys4=0d0
     zs1=0d0; zs2=0d0; zs3=0d0; zs4=0d0
-    
   allocate(psi(NCELLg),vel(NCELLg),tau(NCELLg),sigma(NCELLg),disp(NCELLg),mu(NCELLg),idisp(NCELLg),cslip(NCELLg),pf(NCELLg),sigmae(NCELLg),pfhyd(NCELLg))
   psi=0d0;vel=0d0;tau=0d0;sigma=0d0;disp=0d0
   allocate(a(NCELLg),b(NCELLg),dc(NCELLg),f0(NCELLg),taudot(NCELLg),sigdot(NCELLg),ks(NCELLg),kp(NCELLg),qflow(NCELLg),kLv(NCELLg),kTv(NCELLg),phi(NCELLg))
@@ -508,18 +511,12 @@ program main
   lrtrn=HACApK_init(NCELLg,st_ctl,st_bemv,icomm)
   allocate(coord(NCELLg,3))
 
-    allocate(st_bemv%xcol(NCELLg),st_bemv%ycol(NCELLg),st_bemv%zcol(NCELLg))
+    allocate(st_bemv%xcol(NCELLg),st_bemv%zcol(NCELLg))
     allocate(st_bemv%xs1(NCELLg),st_bemv%xs2(NCELLg),st_bemv%xs3(NCELLg),st_bemv%xs4(NCELLg))
     allocate(st_bemv%zs1(NCELLg),st_bemv%zs2(NCELLg),st_bemv%zs3(NCELLg),st_bemv%zs4(NCELLg))
-    allocate(st_bemv%ang(NCELLg),st_bemv%angd(NCELLg),st_bemv%rake(NCELLg),st_bemv%dsl(NCELLg))
+
     st_bemv%xcol=xcol
-    st_bemv%ycol=ycol
     st_bemv%zcol=zcol
-    ! st_bemv%angd=angd
-    ! st_bemv%ang=ang
-    ! st_bemv%rake=rake
-    ! st_bemv%dsl=ds0
-    ! st_bemv%w=ds0
     st_bemv%xs1=xs1
     st_bemv%xs2=xs2
     st_bemv%xs3=xs3
@@ -570,6 +567,71 @@ program main
     close(99)
   end if
 
+  ! Read in injection data
+  write(fname,'("input/",A)') trim(injStgFileName)
+  open(199,file=fname)
+  read(199,*) numStages
+
+  write(*,*) "numStages: ", numStages
+
+  allocate(stages(numStages))
+  allocate(fracHeights(numStages))
+  allocate(fracMeanPoints_x(numStages))
+  allocate(fracMeanPoints_z(numStages))
+  allocate(fracMeanPoints_x_idx(numStages))
+  allocate(fracMeanPoints_z_idx_start(numStages))
+  allocate(fracMeanPoints_z_idx_end(numStages))
+  allocate(stimPressures(numStages))
+  allocate(stimStartTimes(numStages))
+  allocate(stimDurs(numStages))
+  allocate(stimStarted(numStages))
+  allocate(pfBeforeStim(numStages))
+
+  do i=1,numStages
+    read(199,*) stages(i)
+
+    write(fname,'("input/fracture",i0,"Height.txt")') stages(i)
+    open(10000+i, file=fname)
+    read(10000+i,*) fracHeights(i)
+    close(10000+i)
+
+    write(fname,'("input/fracture",i0,"MeanPoint.txt")') stages(i)
+    open(20000+i, file=fname)
+    read(20000+i,*) fracMeanPoints_x(i), fracMeanPoints_z(i)
+    close(20000+i)
+
+    write(fname,'("input/fracture",i0,"StimPressure.txt")') stages(i)
+    open(30000+i, file=fname)
+    read(30000+i,*) stimPressures(i)
+    close(30000+i)
+   
+    write(fname,'("input/fracture",i0,"StimTimes.txt")') stages(i)
+    open(40000+i, file=fname)
+    read(40000+i,*) stimStartTimes(i), stimDurs(i)
+    close(40000+i)
+   end do
+  close(199)
+
+  do i=1,numStages
+    fracHeights(i) = fracHeights(i)/1e3
+    fracMeanPoints_x(i) = fracMeanPoints_x(i)/1e3
+    fracMeanPoints_z(i) = fracMeanPoints_z(i)/1e3
+
+    ! if ((stages(i) == 12) .or. (stages(i) == 13)) then
+    !     stimPressures(i) = stimPressures(i) + 20.0
+    ! end if 
+
+    fracMeanPoints_x_idx(i) = (argmin(abs(xcol-fracMeanPoints_x(i)))-1)/jmax + 1
+    fracMeanPoints_z_idx_start(i) = modulo(argmin(abs(fracMeanPoints_z(i)+fracHeights(i)/2-zcol)), imax)
+    fracMeanPoints_z_idx_end(i) = modulo(argmin(abs(fracMeanPoints_z(i)-fracHeights(i)/2-zcol)), imax)
+    
+    write(*,*) "For fracture", stages(i), "mean pointx indices:", fracMeanPoints_x_idx(i), fracMeanPoints_z_idx_start(i), fracMeanPoints_z_idx_end(i)
+
+    stimStarted(i) = .FALSE.
+
+    allocate(pfBeforeStim(i)%values(fracMeanPoints_z_idx_end(i)-fracMeanPoints_z_idx_start(i)+1))
+  end do
+  
   if(.not.backslip) then
     taudot=sr
     sigdot=0d0
@@ -580,8 +642,6 @@ program main
   !setting initial condition
   !call initcond_bgflow()
   select case(setting)
-  case('thrust')
-    call initcond_thrust()
   case('injection')
     call initcond_injection()
   case('ss')
@@ -607,13 +667,14 @@ program main
     ! end do
     ! close(nout(1))
 
-    write(fname,'("output/xyz",i0,".dat")') number
-    nout(1)=my_rank+100
-    open(nout(1),file=fname)
-    do i=1,ncellg
-      write(nout(1),'(3e15.6)') xcol(i),ycol(i),zcol(i)
-    end do
-    close(nout(1))
+    ! write(fname,'("output/xyz",i0,"_",i0,".dat")') number,my_rank
+    ! nout(1)=my_rank+100
+    ! open(nout(1),file=fname)
+    ! do i=1,ncell
+    !   i_=st_sum%lodc(i)
+    !   write(nout(1),'(3e15.6)') xcol(i_),ycol(i_),zcol(i_)
+    ! end do
+    ! close(nout(1))
     nout(1)=100
 
     write(fname,'("output/vel",i0,".dat")') number
@@ -646,13 +707,24 @@ program main
     open(51,file=fname)
     write(fname,'("output/monitor",i0,".dat")') number
     open(52,file=fname)
-    nl=5
 
+    nl=6
     call find_locid(imax/2,jmax/2,locid(1))
     call find_locid(imax/4,jmax/2,locid(2))
     call find_locid(imax*3/4,jmax/2,locid(3))
     call find_locid(imax/2,jmax/4,locid(4))
     call find_locid(imax/2,jmax*3/4,locid(5))
+
+    ! Read in Delano location for all-time monitoring
+    write(fname,'("input/",A)') trim(delanoLocFileName)
+    open(299,file=fname)
+    read(299,*) delanoLoc(1), delanoLoc(2)
+    close(299)
+
+    delanoLoc_x_idx = (argmin(abs(xcol-delanoLoc(1)/1e3))-1)/jmax + 1
+    delanoLoc_z_idx = modulo(argmin(abs(delanoLoc(2)/1e3-zcol)), imax)
+    call find_locid(delanoLoc_x_idx, delanoLoc_z_idx, locid(6))
+    write(*,*) "Delano indices: ", delanoLoc_x_idx, delanoLoc_z_idx
 
     do i=1,nl
       write(fname,'("output/local",i0,"-",i0,".dat")') number,i
@@ -677,7 +749,6 @@ program main
   dtdid=0d0
   mvelG=maxval(vel)
   meanmuG=sum(mu)/NCELLg
-  write(*,*) meanmuG
   minnormG=minval(sigmae)
   maxnormG=maxval(sigmae)
   meandispG=sum(disp)/NCELLg
@@ -735,23 +806,23 @@ tout=dtout*365*24*60*60
 
     !update state and stress with explicit solver
     !write(*,*) vel(1489),y(1489),sigmae(1489)
-    call rkqs(y,dydx,x,dttry,eps_r,dtdid,dtnxt,errmax_gb,errmaxloc)
+    call rkqs(y,dydx,x,dttry,eps_r,dtdid,dtnxt,errmax_gb,errmaxloc,dtmax)
     call MPI_ALLGATHERv(y,4*NCELL,MPI_REAL8,yG,4*rcounts,4*displs,MPI_REAL8,MPI_COMM_WORLD,ierr)
 
     do i=1,NCELLg
       psi(i) = yg(4*i-3)
       tau(i) = yg(4*i-2)
-      sigmae(i)=max(yg(4*i-1), minsig)
+      sigmae(i)=yg(4*i-1)
       !sigma(i)=sigmainit
       !sigmae(i)=sigma(i)-pf(i)
 
       mu(i)=tau(i)/sigmae(i)
-      vel(i)=2*vref*exp(-psi(i)/a(i))*sinh(tau(i)/sigmae(i)/a(i))
+      vel(i)= 2*vref*exp(-psi(i)/a(i))*sinh(tau(i)/sigmae(i)/a(i))
       !disp(i)=disp(i)+vel(i)*dtdid*0.5d0
-      sigma(i)=yg(4*i-1)+pf(i)
+      !sigma(i)=yg(4*i-1)+pf(i)
       ks(i)=yg(4*i)
     end do
-    !write(*,*) maxval(ks)
+    !write(*,*) minval(tau)
 
     !update pf with implicit solver
     !write(*,*)maxval(pf)
@@ -759,19 +830,48 @@ tout=dtout*365*24*60*60
     call MPI_BARRIER(MPI_COMM_WORLD,ierr)
 
     ! if(.not.pfconst) then
-    if(pressuredependent) then
-      call implicitsolver(pf,sigma,ks,dtdid,x,dtnxt,niter)
-    else
-      call implicitsolver2(pf,sigma,ks,dtdid,x,dtnxt,niter)
-    end if
+    !   if(pressuredependent) then
+    !     !call implicitsolver(pf,sigma,ks,dtdid,x,dtnxt)
+    !   else
+    ! call implicitsolver2(pf,sigma,ks,dtdid,x,dtnxt,niter)
+      ! end if
     ! end if
     !write(*,*)maxval(pf)
+       
+    call implicitsolver2(pf,sigma,ks,dtdid,x,dtnxt,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
+
+    ! !$omp parallel do
+    ! do i = 1, NCELLg
+    !   if ((xcol(i)**2 + zcol(i)**2) < 1d-10) then
+    !     pf(i) = q0*eta/(4*pi*ks(i)*fwid) * dlog(2*pSig*pSig/(2*pSig*pSig+4*(ks(i)/(eta*phi0*beta)*1d-6)*x)) * 1d-6
+    !       else
+    !     pf(i) = q0*eta/(4*pi*ks(i)*fwid) * (eone((xcol(i)**2 + zcol(i)**2)/(2*pSig*pSig+4*(ks(i)/(eta*phi0*beta)*1d-6)*x)) - eone((xcol(i)**2 + zcol(i)**2)/(2*pSig*pSig))) * 1d-6
+    !     ! if (pf(i)>19) then
+    !     !    write(*, *) "xcol: ", xcol(i)
+    !     !    write(*, *) "zcol: ", zcol(i)
+    !     !    write(*, *) "rCol2: ", rCol2
+    !     !    write(*, *) "pSig: ", pSig
+    !     !    write(*, *) "cDiff: ", cDiff
+    !     !    write(*, *) "x: ", x
+    !     !    write(*,*) "pc: ", q0*eta/(4*pi*ks(i)*fwid) * 1d-6
+    !     !    write(*, *) "pf: ", pf(i)
+    !     ! end if 
+    !   end if
+    ! end do
+    ! !$omp end parallel do
     call MPI_BARRIER(MPI_COMM_WORLD,ierr);time1=MPI_Wtime()
 
 
     !time4=MPI_Wtime()
     !timer=timer+time4-time3
 
+    ! limitsigma
+    if(limitsigma) then
+      do i=1,NCELLg
+        if (yg(4*i-1)<minsig) sigma(i)=pf(i)+minsig+pfinit
+        !if(yg(4*i-1)>maxsig) yg(4*i-1)=maxsig
+      end do
+    end if
 
     !compute physical values for control and output
     !write(*,*) vel(1489),pf(1489),sigmae(1489)
@@ -779,20 +879,42 @@ tout=dtout*365*24*60*60
     do i = 1, NCELLg
       ! psi(i) = yg(4*i-3)
       ! tau(i) = yg(4*i-2)
-      yg(4*i-1)=sigma(i)-pf(i)
-      sigmae(i)=max(yg(4*i-1), minsig)
+      ! rCol2 = xcol(i)*xcol(i) + zcol(i)*zcol(i)
+      ! cDiff = ks(i)/(eta*phi0*beta)*1d-6
+      ! if (rCol2 < 1d-10) then
+      !   pf(i) = q0*eta/(4*pi*ks(i)*fwid) * dlog(2*pSig*pSig/(2*pSig*pSig+4*cDiff*x)) * 1d-6
+      !   ! write(*, *) "xcol: ", xcol(i)
+      !   ! write(*, *) "zcol: ", zcol(i)
+      !   ! write(*, *) "rCol2: ", rCol2
+      !   ! write(*, *) "pf: ", pf(i)
+      ! else
+      !   pf(i) = q0*eta/(4*pi*ks(i)*fwid) * (eone(rCol2/(2*pSig*pSig+4*cDiff*x)) - eone(rCol2/(2*pSig*pSig))) * 1d-6
+      !   if (pf(i)>19) then
+      !      write(*, *) "xcol: ", xcol(i)
+      !      write(*, *) "zcol: ", zcol(i)
+      !      write(*, *) "rCol2: ", rCol2
+      !      write(*, *) "pSig: ", pSig
+      !      write(*, *) "cDiff: ", cDiff
+      !      write(*, *) "x: ", x
+      !      write(*,*) "pc: ", q0*eta/(4*pi*ks(i)*fwid) * 1d-6
+      !      write(*, *) "pf: ", pf(i)
+      !   end if 
+      ! end if
+      sigmae(i)=sigma(i)-pf(i)-pfinit
+      yg(4*i-1)=sigmae(i)
       ! ks(i)=yg(4*i)
       disp(i)=disp(i)+vel(i)*dtdid*0.5d0 !2nd order
       vel(i)= 2*vref*exp(-psi(i)/a(i))*sinh(tau(i)/sigmae(i)/a(i))
       disp(i)=disp(i)+vel(i)*dtdid*0.5d0
       mu(i)=tau(i)/sigmae(i)
-      kp(i)=ks(i)*exp(-sigmae(i)/s0)    
+      kp(i)=ks(i)
     end do
     !$omp end parallel do
     !write(*,*) vel(1489),pf(1489),sigmae(1489)
     call MPI_SCATTERv(yG,4*rcounts,4*displs,MPI_REAL8,y,4*NCELL,MPI_REAL8,0,MPI_COMM_WORLD,ierr)
 
 
+    mpf=maxval(pf)
     mvelG=maxval(vel)
     meanmuG=sum(mu)/NCELLg
     minnormG=minval(sigmae)
@@ -801,21 +923,36 @@ tout=dtout*365*24*60*60
 
     Call MPI_BARRIER(MPI_COMM_WORLD,ierr)
     
+    ! write(*,*) "minimum normal stress:", minnormG
     !stop controls
+    ! if(minnormG<0.2) then
+    !   write(*,*) "time: ", x
+    !   write(*,*) "cDiff: ", cDiff
+    !   write(*,*) "pc: ", q0*eta/(4*pi*ks(1)*fwid) * 1d-6
+    !   write(*,*) "max Pressure: ", mpf
+    !   if(my_rank == 0) write(*,*) 'normal stress below 0.2MPa'
+    !   exit
+    ! end if
     if(mvelG>velmax) then
+      write(*,*) "time: ", x
+      write(*,*) "cDiff: ", cDiff
+      write(*,*) "pc: ", q0*eta/(4*pi*ks(1)*fwid) * 1d-6
+      write(*,*) "max Pressure: ", mpf
+      write(*,*) "minimum rcol2: ", minval(abs(xcol))**2
+      ! write(*,*) "E1: ", (eone(minval(abs(xcol))**2/(2*pSig*pSig+4*cDiff*x)) - eone(minval(abs(xcol))**2/(2*pSig*pSig)))
       if(my_rank == 0) write(*,*) 'slip rate above vmax'
       exit
     end if
     if(mvelG<velmin) then
+      write(*,*) "time: ", x
+      write(*,*) "cDiff: ", cDiff
+      write(*,*) "pc: ", q0*eta/(4*pi*ks(1)*fwid) * 1d-6
+      write(*,*) "max Pressure: ", mpf
       if(my_rank == 0) write(*,*) 'slip rate below vmin'
       exit
     end if
     if(x>tmax) then
       if(my_rank == 0) write(*,*) 'time exceeds tmax'
-      exit
-    end if
-    if(minnormG<0.2) then
-      if(my_rank == 0) write(*,*) 'normal stress below 0.2MPa'
       exit
     end if
 
@@ -902,8 +1039,7 @@ tout=dtout*365*24*60*60
         !eventcount=eventcount+1
         !end of an event
         if(my_rank==0) then
-          !write(51,'(i0,i7,f17.2,i7,e15.6,f14.4)') eventcount,k,onset_time,hypoloc,moment,(log10(moment*rigid*sg)+5.9)/1.5
-          write(51,'(i0,i8,f17.2,f14.4,i8)') eventcount,k,onset_time,(log10(moment*rigid*sg)+5.9)/1.5,hypoloc
+          write(51,'(i0,i7,f17.2,i7,e15.6,f14.4)') eventcount,k,onset_time,hypoloc,moment,(log10(moment*rigid*sg)+5.9)/1.5
         end if
         cslip=disp-idisp
         if(my_rank==0) write(nout(8)) cslip
@@ -980,47 +1116,6 @@ end subroutine
 
 
   !------------initond-----------------------------------------------------------!
-subroutine initcond_thrust()
-  implicit none
-    real(8),parameter::g=9.80,rhor=2.6d3,rhof=1.0d3,ofs=5.0,Qe=1d4,T0=1e0
-    real(8)::q(ncellg),Temp,qtmp,sigmaed(jmax),pfd(jmax)
-    integer::l
-
-  
-    sigma=g*rhor*(zcol+0.02)*1e-3
-    pfhyd=g*rhof*(zcol+0.02)*1e-3
-
-    pfd(1)=pfhyd(1)
-    sigmaed(1)=sigma(1)-pfd(1)
-    pbcl=pfhyd(1)
-    
-    kTv=kT
-    kpmax=kp0*(1+kL/kT/Vpl)-kpmin*kL/kT/Vpl
-    ks=kp0
-
-    do j=2,jmax
-      sigmaed(j)=sigmaed(j-1)+ds0*(sin(dipangle*pi/180d0)*(rhor-rhof)*g*1e-3-q0*eta/kp0*1e-3*exp(sigmaed(j-1)/s0))
-    end do
-    write(*,*) sigmaed
-
-    do l=1,Ncellg
-      i=(l-1)/jmax+1
-      j=l-(i-1)*jmax
-      sigmae(l)=sigmaed(j)
-      pf(l)=sigma(l)-sigmae(l)
-      kp(l)=ks(l)*exp(-sigmae(l)/s0)
-      phi(l)=phi0
-    end do
-    pbcr=pf(ncellg)
-    vel=velinit
-    tau=sigmae*(f0+(a-b)*log(vel/vref))*1.001
-    !tau=sigmae*0.5
-    ! vel=tau/abs(tau)*velinit
-    mu=tau/sigmae
-    psi=a*dlog(2*vref/vel*sinh(tau/sigmae/a))
-    disp=0d0
-    write(*,*) maxval(ks)
-end subroutine
 subroutine initcond_injection()
   implicit none
   real(8)::rr,rand
@@ -1028,10 +1123,9 @@ subroutine initcond_injection()
   kp=kpmin
   ks=kp
   kTv=kT
-  pf=pfinit
   sigma=sigmainit
   pfhyd=0.d0
-  pf=0d0
+  pf=0.d0
   ! !pf(ncellg/2)=2.5
   ! do i=1,ncellg
   !   i_=st_sum%lodc(i)
@@ -1039,13 +1133,12 @@ subroutine initcond_injection()
   !   if(rr<0.04**2) pf(i)=1.0
   ! end do
 
-  sigmae=sigma-pf
+  sigmae=sigma-pfinit
   vel=velinit
-  tau=tauinit
-  if(muinit.ne.0d0) tau=sigmae*muinit
+  tau=sigmae*muinit
   ! vel=tau/abs(tau)*velinit
+  mu=muinit
   psi=a*dlog(2*vref/vel*sinh(tau/sigmae/a))
-  mu=tau/sigmae
 
   !randomize initial state
   ! do i=1,ncellg
@@ -1108,7 +1201,7 @@ subroutine input_well()
   integer::k,kwell
   open(77,file=injection_file)
   read(77,*) nwell
-  if(my_rank==0) write(*,*) 'nwell',nwell
+  write(*,*) 'nwell',nwell
   allocate(iwell(nwell),jwell(nwell),qvals(nwell,50),qtimes(nwell,50),kleng(nwell))
   do kwell=1,nwell
     read(77,*) iwell(kwell),jwell(kwell),kleng(kwell)
@@ -1192,7 +1285,6 @@ subroutine coordinate3dp(imax,jmax,ds0,xcol,zcol,xs1,xs2,xs3,xs4,zs1,zs2,zs3,zs4
       k=(i-1)*jmax+j
       xcol(k)=(i-imax/2-0.5d0)*dx
       zcol(k)=-(j-jmax/2-0.5d0)*dz
-      !zcol(k)=(j-0.5d0)*dz
       xs1(k)=xcol(k)+0.5d0*dx
       xs2(k)=xcol(k)-0.5d0*dx
       xs3(k)=xcol(k)-0.5d0*dx
@@ -1206,61 +1298,44 @@ subroutine coordinate3dp(imax,jmax,ds0,xcol,zcol,xs1,xs2,xs3,xs4,zs1,zs2,zs3,zs4
   return
 end subroutine coordinate3dp
 
-subroutine coordinate3ddip(imax,jmax,ds0,dipangle)
-  implicit none
-  integer,intent(in)::imax,jmax
-  real(8),intent(in)::ds0,dipangle
-  !integer,intent(in)::NCELLg
-  !real(8),intent(out)::xcol(:),ycol(:),zcol(:)
-  !real(8),intent(out)::xs1(:),xs2(:),xs3(:),ys1(:),ys2(:),ys3(:),zs1(:),zs2(:),zs3(:)
-  integer::i,j,k
-  real(8)::xc,yc,zc,amp,yr(0:jmax),zr(0:jmax),stangle
+  subroutine coordinate3ddip(imax,jmax,ds0,dipangle)
+    implicit none
+    integer,intent(in)::imax,jmax
+    real(8),intent(in)::ds0,dipangle
+    !integer,intent(in)::NCELLg
+    !real(8),intent(out)::xcol(:),ycol(:),zcol(:)
+    !real(8),intent(out)::xs1(:),xs2(:),xs3(:),ys1(:),ys2(:),ys3(:),zs1(:),zs2(:),zs3(:)
+    integer::i,j,k
+    real(8)::xc,yc,zc,amp,yr(0:imax),zr(0:imax),stangle
 
 
-    !dipangle=dipangle*pi/180d0
-    stangle=0d0*pi/180d0
-     k=0
-     yr(0)=0d0
-     zr(0)=0d0
-     !nb=int(50.0*jmax/320.0)
-     !if(my_rank==0) write(*,*)nb
-     do j=1,jmax
-     yr(j)=yr(j-1)-ds0*cos(dipangle*pi/180d0)
-     zr(j)=zr(j-1)-ds0*sin(dipangle*pi/180d0)
-     end do
-     do i=1,imax
+      !dipangle=dipangle*pi/180d0
+      stangle=0d0*pi/180d0
+       k=0
+       yr(0)=0d0
+       zr(0)=0d0
+       !nb=int(50.0*jmax/320.0)
+       !if(my_rank==0) write(*,*)nb
        do j=1,jmax
-       k=k+1
-         xcol(k)=(i-imax/2-0.5d0)*ds0
-         !ys1(k)=yr(j-1)
-         !ys2(k)=yr(j-1)
-         !ys3(k)=yr(j)
-         !ys4(k)=yr(j)
-         ycol(k)=0.5d0*(yr(j-1)+yr(j)) !-(j-0.5d0)*ds0*cos(dipangle)
-         zcol(k)=0.5d0*(zr(j-1)+zr(j)) !-(j-0.5d0)*ds0*sin(dipangle)
-         !xcol(k)=(i-imax/2-0.5d0)*ds0
-         !zcol(k)=(j-jmax/2-0.5d0)*ds0
-         !xs1(k)=xcol(k)+0.5d0*ds0
-         !xs2(k)=xcol(k)-0.5d0*ds0
-         !xs3(k)=xcol(k)-0.5d0*ds0
-         !xs4(k)=xcol(k)+0.5d0*ds0
-         !zs1(k)=zcol(k)+0.5d0*ds0*sin(dipangle)
-         !zs2(k)=zcol(k)+0.5d0*ds0*sin(dipangle)
-         !zs3(k)=zcol(k)-0.5d0*ds0*sin(dipangle)
-         !zs4(k)=zcol(k)-0.5d0*ds0*sin(dipangle)
-         !ys1(k)=ycol(k)+0.5d0*ds0*cos(dipangle)*sin(stangle)
-         !ys2(k)=ycol(k)-0.5d0*ds0*cos(dipangle)*sin(stangle)
-         !ys3(k)=ycol(k)-0.5d0*ds0*cos(dipangle)*sin(stangle)
-         !ys4(k)=ycol(k)+0.5d0*ds0*cos(dipangle)*sin(stangle)
-         angd(k)=datan2(zr(j-1)-zr(j),yr(j-1)-yr(j))
-         ang(k)=0d0
-         !write(*,*)angd(k)
-         if(my_rank==0)write(111,*)xcol(k),ycol(k),zcol(k)
-         end do
-     end do
+       yr(j)=yr(j-1)-ds0*cos(dipangle*pi/180d0)
+       zr(j)=zr(j-1)-ds0*sin(dipangle*pi/180d0)
+       end do
+       do i=1,imax
+         do j=1,jmax
+         k=k+1
+           xcol(k)=(i-imax/2-0.5d0)*ds0
+           ycol(k)=0.5d0*(yr(j-1)+yr(j)) !-(j-0.5d0)*ds0*cos(dipangle)
+           zcol(k)=0.5d0*(zr(j-1)+zr(j)) !-(j-0.5d0)*ds0*sin(dipangle)
 
-  return
-end subroutine coordinate3ddip
+           angd(k)=datan2(zr(j-1)-zr(j),yr(j-1)-yr(j))
+           ang(k)=0d0
+           !write(*,*)angd(k)
+           if(my_rank==0)write(111,*)xcol(k),ycol(k),zcol(k)
+           end do
+       end do
+
+    return
+  end subroutine coordinate3ddip
 
   subroutine varscalc(NCELL,displs,vars)
     implicit none
@@ -1316,68 +1391,16 @@ end subroutine coordinate3ddip
     end do
 
   end subroutine
-  subroutine implicitsolver(pf,sigma,ks,h,time,dtnxt,niter)
+  subroutine implicitsolver2(pf,sigma,ks,h,time,dtnxt,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
     implicit none
     integer::kit,errloc(1),l,l_
+    integer,intent(in)::numStages,fracMeanPoints_x_idx(:),fracMeanPoints_z_idx_start(:),fracMeanPoints_z_idx_end(:)
+    real(8),intent(in)::stimStartTimes(:),stimDurs(:),stimPressures(:)
     integer,intent(out)::niter
     real(8),intent(inout)::pf(:),dtnxt
     real(8),intent(in)::h,time,sigma(:),ks(:)
-    real(8)::dpf(ncellg),pfd(imax,jmax),pftry(imax,jmax),pfnew(imax,jmax),sigmae(ncellg),cdiff(imax,jmax),err,err0,adpf(ncellg),pfhydd(imax,jmax)
+    real(8)::dpf(ncellg),pfd(imax,jmax),pftry(imax,jmax),pfnew(imax,jmax),sigmae(ncellg),cdiff(imax,jmax),err,err0,adpf(ncellg)
     real(8),parameter::dpth=0.1
-    !real(8),parameter::cc=1d-12 !beta(1e-8)*phi(1e-1)*eta(1e-3)
-    cdiff=0d0
-    do l=1,ncellg
-      i=(l-1)/jmax+1
-      j=l-(i-1)*jmax
-      pfd(i,j)=pf(l)
-      pfhydd(i,j)=pfhyd(l)
-    end do
-    pftry=pfd
-    cc=eta*beta*phi0
-    !write(*,*) 'cc',cc
-
-
-    do kit=1,20
-      do l=1,ncellg
-        i=(l-1)/jmax+1
-        j=l-(i-1)*jmax
-        cdiff(i,j)=ks(l)*exp(-(sigma(l)-pftry(i,j))/s0)/cc*1d-6 !Pa-->MPa
-      end do
-      !write(*,*) maxval(cdiff),maxval(sigma),maxval(ks)
-
-      err=0d0
-      call Beuler(pfd,cdiff,h,pfnew,time,niter,pfhydd)
-
-      err=maxval(abs(pftry-pfnew))
-      !write(*,*) 'err',err
-      if(err<1e-5) exit
-      pftry=pfnew
-      err0=err
-    end do
-
-      do l=1,ncellg
-        i=(l-1)/jmax+1
-        j=l-(i-1)*jmax
-        dpf(l)=pfnew(i,j)-pf(l)
-        pf(l)=pfnew(i,j)
-      end do
-      !write(*,*)sum(pf)
-
-    !write(*,*) 'niter',niter
-      adpf=abs(dpf)
-    !write(*,*) 'dpf',maxval(adpf)
-    if(dtnxt/h*maxval(adpf)>dpth)  dtnxt=dpth*h/maxval(adpf)
-    return
-  end subroutine
-
-  subroutine implicitsolver2(pf,sigma,ks,h,time,dtnxt,niter)
-    implicit none
-    integer::kit,errloc(1),l,l_
-    integer,intent(out)::niter
-    real(8),intent(inout)::pf(:),dtnxt
-    real(8),intent(in)::h,time,sigma(:),ks(:)
-    real(8)::dpf(ncellg),pfd(imax,jmax),pfnew(imax,jmax),sigmae(ncellg),cdiff(imax,jmax),err,err0,adpf(ncellg),pfhydd(imax,jmax)
-    real(8),parameter::dpth=0.1,tny=1d0
     !real(8),parameter::cc=1d-12 !beta(1e-8)*phi(1e-1)*eta(1e-3)
     cdiff=0d0
 
@@ -1385,17 +1408,33 @@ end subroutine coordinate3ddip
       !sigma(l)=sigmae(l)+pf(l)
       i=(l-1)/jmax+1
       j=l-(i-1)*jmax
-      cc=eta*beta*phi0
-      pfd(i,j)=pf(l)
-      pfhydd(i,j)=pfhyd(l)
-      cdiff(i,j)=ks(l)/cc*1d-6 !Pa-->MPa
-      !cdiff(i,j)=kpmax/cc*1d-6 !Pa-->MPa
-      !write(*,*) l_,i,j
+      pftry(i,j) = pf(l)
     end do
-    !write(*,*) pfd
 
     err=0d0
-    call Beuler(pfd,cdiff,h,pfnew,time,niter,pfhydd)
+    do kit=1,20
+      do l=1,ncellg
+        !sigma(l)=sigmae(l)+pf(l)
+        i=(l-1)/jmax+1
+        j=l-(i-1)*jmax
+        cc=eta*beta*phi0
+        pfd(i,j)=pf(l)
+        cdiff(i,j)=ks(l)*exp(-(sigma(l)-pftry(i,j)-pfinit)/s0)/cc*1d-6
+        !cdiff(i,j)=kpmax/cc*1d-6 !Pa-->MPa
+        !write(*,*) l_,i,j
+      end do
+      !write(*,*) pfd
+
+      call Beuler(pfd,cdiff,h,pfnew,time,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
+
+      err=maxval(abs(pftry-pfnew))
+      !write(*,*) pftry
+      !write(*,*) pfnew
+      !write(*,*) 'err',err
+      if(err<1e-3) exit
+      pftry=pfnew
+      err0=err
+    end do
 
     do l=1,ncellg
       i=(l-1)/jmax+1
@@ -1403,51 +1442,44 @@ end subroutine coordinate3ddip
       dpf(l)=pfnew(i,j)-pf(l)
       pf(l)=pfnew(i,j)
     end do
-      !write(*,*)sum(pf)
+    !write(*,*)sum(pf)
 
     !write(*,*) 'niter',niter
       adpf=abs(dpf)
     !write(*,*) 'dpf',maxval(adpf)
     if(dtnxt/h*maxval(adpf)>dpth)  dtnxt=dpth*h/maxval(adpf)
-
-    !check if next time step is after the change in the injection rate
-    if(switch) then
-        dtnxt=2e1
-        switch=.false.
-    end if
-    if(injectionfromfile) then
-      if(x+dtnxt>qtimes(1,nn)) then
-        !if(my_rank==0) write(*,*) x
-        dtnxt=qtimes(1,nn)-x-tny
-        switch=.true.
-        nn=nn+1
-        if(qtimes(1,nn)-qtimes(1,nn-1)<1e0) nn=nn+1
-        !if(my_rank==0) write(*,*) nn,qtimes(1,nn),x+dtnxt
-      end if
-    end if
-    
     return
   end subroutine
 
-  subroutine Beuler(pf,cdiff,h,pfnew,time,niter,pfhyd)
+  subroutine Beuler(pf,cdiff,h,pfnew,time,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
     implicit none
     integer,parameter::itermax=1000
-    real(8),intent(in)::pf(:,:),h,cdiff(:,:),time,pfhyd(:,:)
+    integer,intent(in)::numStages,fracMeanPoints_x_idx(:),fracMeanPoints_z_idx_start(:),fracMeanPoints_z_idx_end(:)
+    real(8),intent(in)::pf(:,:),h,cdiff(:,:),time,stimStartTimes(:),stimDurs(:),stimPressures(:)
     real(8),intent(out)::pfnew(:,:)
     integer,intent(out)::niter
     real(8)::Dxx(imax,jmax,3),Dyy(imax,jmax,3),Amx(imax,jmax,3),Amy(imax,jmax,3),mx(imax,jmax),my(imax,jmax)
     real(8)::p(imax,jmax),m(imax,jmax),r(imax,jmax),x(imax,jmax),b(imax,jmax),SAT(imax,jmax)
-    integer::n,iter,i,j,k,kwell
-    real(8)::p0=0.0,rsold,rsnew,tmp1,tmp2,alpha,v1,v0,t1,t0,qtmp,qdt
-    real(8),parameter::tol=1e-6
+    integer::n,iter,i,j,k,kwell,Nfrac_div2,istep_Lfrac_sep,jOffset_Hfrac,l_start,l_end
+    real(8)::p0=0.0,rsold,rsnew,tmp1,tmp2,alpha,v1,v0,t1,t0,qtmp,pdrop
+    real(8),parameter::tol=1e-4
+    real(8),parameter::sourceTermFactor=1e2
+    integer :: info
+    integer:: nnz
+    real(8):: b1D(imax*jmax), b1Dtemp(imax*jmax)
+    integer, allocatable, target:: iaSparse(:), jaSparse(:)
+    real(8), allocatable, target:: aSparse(:)
+
+
     !real(8),parameter::str=1e-11 !beta(1e-9)*phi(1e-2)
     niter=0
     p=0d0;m=0d0;r=0d0;x=0d0;b=0d0
 
     Dxx=0d0 
+
     do i=1,imax
         !compute Dxx for Dirichlet BC
-        select case(bct)
+        select case(bc)
         case('Dirichlet')
         Dxx(i,1,1)=-cdiff(i,1)-cdiff(i,2)
         Dxx(i,1,2)=cdiff(i,2)-cdiff(i,1)
@@ -1462,7 +1494,7 @@ end subroutine coordinate3ddip
         Dxx(i,j,1:3)=(/cdiff(i,j-1)/2+cdiff(i,j)/2, -cdiff(i,j-1)/2-cdiff(i,j)-cdiff(i,j+1)/2, cdiff(i,j)/2+cdiff(i,j+1)/2/)
         end do
 
-        select case(bcb)
+        select case(bc)
         case('Dirichlet')
         Dxx(i,jmax-1,1:3)=(/cdiff(i,jmax-2)/2+cdiff(i,jmax-1)/2, -cdiff(i,jmax-2)/2-cdiff(i,jmax-1)-cdiff(i,jmax)/2, -cdiff(i,jmax)/2+cdiff(i,jmax-1)/2/)
         Dxx(i,jmax,3)=-cdiff(i,jmax)-cdiff(i,jmax-1)
@@ -1479,7 +1511,7 @@ end subroutine coordinate3ddip
     Dyy=0d0
     do j=1,jmax
         !compute Dxx for Dirichlet BC
-        select case(bcl)
+        select case(bc)
         case('Dirichlet')
         Dyy(1,j,1)=-cdiff(1,j)-cdiff(2,j)
         Dyy(1,j,2)=cdiff(2,j)-cdiff(1,j)
@@ -1494,7 +1526,7 @@ end subroutine coordinate3ddip
         Dyy(i,j,1:3)=(/cdiff(i-1,j)/2+cdiff(i,j)/2, -cdiff(i-1,j)/2-cdiff(i,j)-cdiff(i+1,j)/2, cdiff(i,j)/2+cdiff(i+1,j)/2/)
         end do
 
-        select case(bcr)
+        select case(bc)
         case('Dirichlet')
         Dyy(imax-1,j,1:3)=(/cdiff(imax-2,j)/2+cdiff(imax-1,j)/2, -cdiff(imax-2,j)/2-cdiff(imax-1,j)-cdiff(imax,j)/2, -cdiff(imax,j)/2+cdiff(imax-1,j)/2/)
         Dyy(imax,j,3)=-cdiff(imax,j)-cdiff(imax-1,j)
@@ -1532,56 +1564,60 @@ end subroutine coordinate3ddip
 
     SAT=0d0
   
-    x=pf-pfhyd !initial guess
+    x=pf !initial guess
 
-    if(setting=='ss') then
-      SAT(1,:)=-q0/beta/phi0*1e-9*h/ds0*2
-      SAT(imax,:)=q0/beta/phi0*1e-9*h/ds0*2
-    end if
-    if(setting=='thrust') then
-      SAT(:,1)=-1.0*cdiff(:,1)/ds0/ds0*(pbcl-pfhyd(:,1))*h*2
-      SAT(:,2)=-0.5*cdiff(:,1)/ds0/ds0*(pbcl-pfhyd(:,1))*h*2
-      !SAT(:,1)=q0/beta/phi0*1e-9*h/ds0*2
-      select case(bcb)
-      case('Neumann')
-        SAT(:,jmax)=-q0/beta/phi0*1e-9*h/ds0*2
-      case('Dirichlet')
-        SAT(:,jmax)=-1.0*cdiff(:,jmax)/ds0/ds0*(pbcr-pfhyd(:,jmax))*h*2
-        SAT(:,jmax-1)=-0.5*cdiff(:,jmax)/ds0/ds0*(pbcr-pfhyd(:,jmax))*h*2
-      end select
-    end if
+    b=pf-SAT
 
-    b=pf-SAT-pfhyd
+    ! write(*,*) "minimum b before fracture: ", minval(b)
+    ! write(*,*) "minimum pf before fracture: ", minval(pf)
 
-    if(setting=='injection') then
-    if(injectionfromfile) then
-      qtmp=0d0
-      do kwell=1,nwell
-        do k=1,kleng(kwell)-1
-          t0=qtimes(kwell,k)
-          t1=qtimes(kwell,k+1)
-          v0=qvals(kwell,k)
-          v1=qvals(kwell,k+1)
-          if (time >= t0 .and. time <= t1) then
-            qtmp=(v1-v0)/(t1-t0)*(time-t0)+v0
-          else if (time> t1.and. k == kleng(kwell)-1) then
-            qtmp=v1
-          end if
-        end do
-        if(qtmp<0) qtmp=0d0
-        i=iwell(kwell)
-        j=jwell(kwell)
-        !write(*,*)i,j,qtmp
-        b(i,j)=b(i,j)+h*qtmp/beta/phi0*1e-12/ds0/ds0
-      end do
-    else if(time<tinj*365*24*3600) then
-    !write(*,*) "injection"
-      b(imax/2,jmax/2)=b(imax/2,jmax/2)+h*q0/beta/phi0*1e-12/ds0/ds0
-    end if
-    end if
+    ! Enforce pressure conditions at fracture intersections
+    do i=1,numStages
+       if  (time .GE. stimStartTimes(i)) then
+           ! Remember the pressure at the fractures right before stimulation
+           ! started. We wil use this to gradually increase the fracture
+           ! pressure so that we avoid exceeding the maximum slip rate
+           ! threshold.
+           if (.NOT. stimStarted(i)) then
+               pfBeforeStim(i)%values = pf(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))
+               stimStarted(i) = .TRUE.
+           end if
 
-    !b(imax/2-5:imax/2+5,jmax/2-5:jmax/2+5)=b(imax/2-5:imax/2+5,jmax/2-5:jmax/2+5)+h*q0/beta/phi0*1e-12/ds0/ds0
-    
+           Amx(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),1) = 0.0
+           Amx(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),2) = 0.5
+           Amx(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),3) = 0.0
+           Amy(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),1) = 0.0
+           Amy(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),2) = 0.5
+           Amy(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),3) = 0.0
+
+           if (time .GT. (stimStartTimes(i)+stimDurs(i))) then ! Post shut-in
+               ! Index along the fracture for the permeability
+               l_start = fracMeanPoints_z_idx_start(i) + (fracMeanPoints_x_idx(i)-1)*jmax
+               l_end = fracMeanPoints_z_idx_end(i) + (fracMeanPoints_x_idx(i)-1)*jmax
+
+               ! Prescribe pressure in the fracture at the next time step
+               b(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i)) = x(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i)) - fwid*1.d-3 * ks(l_start:l_end)/eta * sum(2*x(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))-x(fracMeanPoints_x_idx(i)+1,fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))-x(fracMeanPoints_x_idx(i)-1,fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))) * h / (Lfrac*Hfrac*Hfrac*1.d-9*pi*(1-pois)/(2*rigid*1.d3))
+
+           else ! During stimulation
+               ! Prescribe fracture pressure
+               b(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i)) = (stimPressures(i)-pfinit-pfBeforeStim(i)%values)*dtanh((time-stimStartTimes(i))/tanh_alpha) + pfBeforeStim(i)%values
+           end if
+       else
+           stimStarted(i) = .FALSE.
+       end if
+    end do
+
+    ! write(*,*) "minimum b after fracture: ", minval(b)
+    ! if (abs(minval(b)) > 1.d8) then
+    !    write(*,*) "x(49, 39): ", x(49, 39) 
+    !    write(*,*) "l_start: ", l_start
+    !    write(*,*) "l_end: ", l_end
+    !    write(*,*) "ks: ", ks(l_start:l_end)
+    !    i = 1
+    !    write(*,*) "sum: ", sum(2*x(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))-x(fracMeanPoints_x_idx(i)+1,fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))-x(fracMeanPoints_x_idx(i)-1,fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i)))
+    !    write(*,*) "denom: ", (Lfrac*Hfrac*Hfrac*1.d-9*pi*(1-pois)/(2*rigid*1.d3))
+    !    write(*,*) "Lfrac: ", Lfrac
+    ! end if 
 
     mx=0d0
     do i=1,imax
@@ -1650,8 +1686,46 @@ end subroutine coordinate3ddip
   
       end do
 
-      if(niter==itermax) write(*,*) "Maximum iteration"
-      100 pfnew=x+pfhyd
+      100 pfnew=x
+
+      if(niter==itermax) then
+        write(*,*) "Maximum iteration reached for CG at time: ", time
+        write(*,*) 'Any Inf in b? ', any(abs(b) > huge(1.0e8))
+
+        call build_sparse_system(Amx, Amy, b, nnz, iaSparse, jaSparse, aSparse, b1D)
+        call check_csr(iaSparse, jaSparse, imax*jmax)
+
+        write(fname,'("output/iaSparse.dat")')
+        open(nout(9),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(9)) iaSparse
+
+        write(fname,'("output/jaSparse.dat")')
+        open(nout(10),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(10)) jaSparse
+
+        write(fname,'("output/aSparse.dat")')
+        open(nout(11),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(11)) aSparse
+
+        write(fname,'("output/bmat.dat")')
+        open(nout(12),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(12)) b1D
+
+        write(*,*) "Engaging GMRES solver"
+        call gmres_csr_solver(imax*jmax, iaSparse, jaSparse, aSparse, b1D, b1Dtemp, 1000, 1d-8)
+
+        write(*,*) 'Any NaN in b1D? ', any(b1D /= b1D)
+        write(*,*) 'Any Inf in b1D? ', any(abs(b1D) > huge(1.0e8))
+        write(*,*) 'Any Inf in b? ', any(abs(b) > huge(1.0e8))
+
+        do j = 1, jmax
+            do i = 1, imax
+                k = (j-1)*imax + i
+                pfnew(i,j) = b1Dtemp(k)
+            end do
+        end do
+
+      end if
 
     return
     end subroutine
@@ -1679,7 +1753,7 @@ end subroutine coordinate3ddip
         i_=vars(i)
         psitmp(i) = y(4*i-3)
         tautmp(i) = y(4*i-2)
-        sigmaetmp(i) = max(y(4*i-1),minsig)
+        sigmaetmp(i) = y(4*i-1)
         kstmp(i)=y(4*i)
         veltmp(i) = 2*vref*dexp(-psitmp(i)/a(i_))*dsinh(tautmp(i)/sigmaetmp(i)/a(i_))
         !if(abs(i-ncellg/2)<5) write(*,*) psitmp(i)
@@ -1693,17 +1767,15 @@ end subroutine coordinate3ddip
       sum_gn=0d0
 
       call MPI_ALLGATHERv(veltmp,NCELL,MPI_REAL8,veltmpG,rcounts,displs,MPI_REAL8,MPI_COMM_WORLD,ierr)
+      ! write(*,*) "derivs3"
       if(backslip) then
+        ! write(*,*) "derivs4"
         lrtrn=HACApK_adot_pmt_lfmtx_hyp(st_leafmtxps,st_bemv,st_ctl,sum_gsG,veltmpG-vpl)
       else
         lrtrn=HACApK_adot_pmt_lfmtx_hyp(st_leafmtxps,st_bemv,st_ctl,sum_gsG,veltmpG)
       end if
-      if(problem=='3dnr'.or.problem=='3dhr'.or.problem=='3dph') then
-        sum_gsg(:)=sum_gsg(:)/ds0
-      end if
-
+      ! write(*,*) "derivs5"
       call MPI_SCATTERv(sum_gsg,rcounts,displs,MPI_REAL8,sum_gs,NCELL,MPI_REAL8,0,MPI_COMM_WORLD,ierr)
-     
 
     !$omp parallel do
       do i=1,NCELL
@@ -1748,7 +1820,7 @@ end subroutine coordinate3ddip
     end subroutine
 
  !---------------------------------------------------------------------
-    subroutine rkqs(y,dydx,x,htry,eps,hdid,hnext,errmax_gb,errmaxloc)!,,st_leafmtxp,st_bemv,st_ctl)!,derivs)
+    subroutine rkqs(y,dydx,x,htry,eps,hdid,hnext,errmax_gb,errmaxloc,dtmax)!,,st_leafmtxp,st_bemv,st_ctl)!,derivs)
       !---------------------------------------------------------------------
       use m_HACApK_solve
       use m_HACApK_base
@@ -1756,7 +1828,7 @@ end subroutine coordinate3ddip
       implicit none
       !include 'mpif.h'
       !integer::NCELL,NCELLg,rcounts(:),displs(:)
-      real(8),intent(in)::htry,eps
+      real(8),intent(in)::htry,eps,dtmax
       real(8),intent(inout)::y(:),x,dydx(:)
       real(8),intent(out)::hdid,hnext,errmax_gb !hdid: resulatant dt hnext: htry for the next
       integer,intent(out)::errmaxloc
@@ -1791,7 +1863,7 @@ end subroutine coordinate3ddip
         !     errmaxloc=i
         !   end if!errmax=errmax+yerr(3*i-2)**2
         ! end do
-  
+
         do i=1,4*ncell
           if(abs(yerr(i)/ytemp(i))/eps>errmax) then
             errmax=abs(yerr(i)/ytemp(i))/eps
@@ -1817,16 +1889,31 @@ end subroutine coordinate3ddip
   
         xnew=x+h
         if(xnew-x<1.d-15) then
-          if(my_rank.eq.0)write(*,*)'ERROR: Runge-Kutta method did not converge'
+          if(my_rank.eq.0)write(*,*)'error: dt is too small'
           stop
         end if
   
       end do
   
       hnext=min(2*h,SAFETY*h*(errmax_gb**PGROW))
+      if(outpertime) then
+        hnext=min(hnext,dtout*365*24*3600)
+      end if
+      !if(load==0)
       hnext=min(hnext,dtmax)
-      !if(load==0)hnext=min(hnext,dtmax)
       !hnext=max(0.249d0*ds0/vs,SAFETY*h*(errmax_gb**PGROW))
+
+      ! take small enough time step so that it stops at beginning of a new
+      ! stimulation
+      do i=1,numStages
+        if (stimStartTimes(i) .GT. x+h) then
+           ! write(*,*) "Time: ", x
+           ! write(*,*) "Time + dt: ", x + h
+           ! write(*,*) "dt_next: ", hnext
+           ! write(*,*) "hnext_injection: ", stimStartTimes(i)-x-h
+           hnext=min(hnext, stimStartTimes(i)-x-h+dtmax/1e1)
+        end if
+      end do
   
       !hnext=min(,1d9)
   
@@ -1864,6 +1951,7 @@ end subroutine coordinate3ddip
     parameter (DC1=C1-2825./27648.,DC3=C3-18575./48384.)
     parameter (DC4=C4-13525./55296.,DC5=-277./14336.,DC6=C6-.25)
     !ierr=0
+
     !     -- 1st step --
     call derivs(x, y, ak1)!,,st_leafmtxp,st_bemv,st_ctl)
     !$omp parallel do
@@ -1911,7 +1999,6 @@ end subroutine coordinate3ddip
       yout(i)=y(i)+h*(C1*ak1(i)+C3*ak3(i)+C4*ak4(i)+ C6*ak6(i))
     end do
     !$omp end parallel do
-
 
     !$omp parallel do
     do i=1,size(y)
@@ -2045,6 +2132,337 @@ end subroutine coordinate3ddip
     Call MPI_FINALIZE(ierr)
     stop
   end subroutine
+
+  integer function argmin(array)
+      real(8), intent(in) :: array(:)
+      real :: minval
+      integer :: iCur
+  
+      minval = array(1)
+      argmin = 1
+      do iCur = 2, size(array)
+          if (array(iCur) < minval) then
+              minval = array(iCur)
+              argmin = iCur
+          end if
+      end do
+  end function argmin
+
+  real function heaviside(x)
+      implicit none
+      real(8), intent(in) :: x
+  
+      if (x < 0.0) then
+          heaviside = 0.0
+      else if (x > 0.0) then
+          heaviside = 1.0
+      else
+          heaviside = 0.5  ! or 0.0 or 1.0 depending on your convention
+      end if
+  end function heaviside
+
+  subroutine build_dense_system(Amx, Amy, b2D, A, b1D)
+    implicit none
+    integer :: i, j, k
+    real(8), intent(in)  :: Amx(:,:,:), Amy(:,:,:), b2D(:,:)
+    real(8), intent(out) :: A(:,:), b1D(:)
+
+    ! Initialize dense matrix and RHS
+    A = 0.0d0
+    b1D = 0.0d0
+
+    ! Loop over all nodes
+    do i = 1, imax
+        do j = 1, jmax
+            k = (j-1)*imax + i  ! 1D index
+
+            ! Dirichlet boundary: outer nodes
+            if (i == 1 .or. i == imax .or. j == 1 .or. j == jmax) then
+                A(k,:) = 0.0d0
+                A(k,k) = 1.0d0
+                b1D(k) = b2D(i,j)  ! prescribed pressure
+            else
+                ! Interior node: fill contributions from Amx and Amy
+
+                ! X-direction
+                if (j > 1)      A(k, k-1)   = Amx(i,j,1)
+                A(k, k)       = Amx(i,j,2) + Amy(i,j,2)
+                if (j < jmax)  A(k, k+1)   = Amx(i,j,3)
+
+                ! Y-direction
+                if (i > 1)      A(k, k-imax) = Amy(i,j,1)
+                if (i < imax)   A(k, k+imax) = Amy(i,j,3)
+
+                ! RHS
+                b1D(k) = b2D(i,j)
+            end if
+        end do
+    end do
+
+  end subroutine build_dense_system
+
+  subroutine build_sparse_system(Amx, Amy, b2D, nnz, iaSparse, jaSparse, aSparse, b1D)
+  implicit none
+  ! Inputs
+  real(8), intent(in) :: Amx(imax,jmax,3)
+  real(8), intent(in) :: Amy(imax,jmax,3)
+  real(8), intent(in) :: b2D(imax,jmax)
+  ! Outputs
+  integer, intent(out) :: nnz
+  integer, allocatable, intent(out) :: iaSparse(:), jaSparse(:)
+  real(8), allocatable, intent(out) :: aSparse(:)
+  real(8), intent(out) :: b1D(imax*jmax)
+
+  integer :: i,j,k,nnz_counter
+  integer :: row
+  integer :: max_nnz_per_row
+  integer, allocatable :: row_counts(:)
+
+  ! Temporary arrays for COO format
+  integer, allocatable :: jaTmp(:)
+  real(8), allocatable :: aTmp(:)
+
+  integer :: total_rows
+  total_rows = imax*jmax
+  max_nnz_per_row = 5   ! 5-point stencil max
+
+  allocate(row_counts(total_rows))
+  row_counts = 0
+
+  ! First pass: count nonzeros per row
+  do j = 1,jmax
+    do i = 1,imax
+      k = i + (j-1)*imax
+      b1D(k) = b2D(i,j)
+
+      if (i==1 .or. i==imax .or. j==1 .or. j==jmax) then
+        ! Dirichlet row: only diagonal
+        row_counts(k) = 1
+      else
+        ! Interior node: 5-point stencil
+        row_counts(k) = 5
+      end if
+    end do
+  end do
+
+  ! Build iaSparse as row pointer
+  allocate(iaSparse(total_rows+1))
+  iaSparse(1) = 1
+  do i = 1,total_rows
+    iaSparse(i+1) = iaSparse(i) + row_counts(i)
+  end do
+
+  nnz = iaSparse(total_rows+1)-1
+  allocate(jaSparse(nnz))
+  allocate(aSparse(nnz))
+
+  ! Fill jaSparse and aSparse
+  do j = 1,jmax
+    do i = 1,imax
+      k = i + (j-1)*imax
+      nnz_counter = iaSparse(k)
+
+      if (i==1 .or. i==imax .or. j==1 .or. j==jmax) then
+        ! Dirichlet: diagonal only
+        jaSparse(nnz_counter) = k
+        aSparse(nnz_counter) = 1.0d0
+      else
+        ! Interior: x-direction
+        jaSparse(nnz_counter  ) = k-1
+        aSparse(nnz_counter) = Amx(i,j,1)
+        nnz_counter = nnz_counter + 1
+
+        jaSparse(nnz_counter  ) = k
+        aSparse(nnz_counter) = Amx(i,j,2) + Amy(i,j,2)  ! center includes y-center
+        nnz_counter = nnz_counter + 1
+
+        jaSparse(nnz_counter  ) = k+1
+        aSparse(nnz_counter) = Amx(i,j,3)
+        nnz_counter = nnz_counter + 1
+
+        ! y-direction
+        jaSparse(nnz_counter  ) = k-imax
+        aSparse(nnz_counter) = Amy(i,j,1)
+        nnz_counter = nnz_counter + 1
+
+        jaSparse(nnz_counter  ) = k+imax
+        aSparse(nnz_counter) = Amy(i,j,3)
+      end if
+    end do
+  end do
+
+  end subroutine build_sparse_system
+
+  subroutine check_csr(ia, ja, n)
+  implicit none
+  integer, intent(in) :: ia(:), ja(:), n
+  integer :: k, nnz
+  if (size(ia) /= n+1) stop 'CSR error: ia size != n+1'
+  if (ia(1) /= 1)      stop 'CSR error: ia(1) must be 1 (1-based)'
+  do k=1,n
+     if (ia(k+1) < ia(k)) stop 'CSR error: ia not nondecreasing'
+  end do
+  nnz = ia(n+1) - 1
+  if (nnz < 0) stop 'CSR error: ia(n+1) < 1'
+  if (size(ja) < nnz) stop 'CSR error: ja too small'
+  if (minval(ja(1:nnz)) < 1 .or. maxval(ja(1:nnz)) > n) stop 'CSR error: ja out of range'
+  end subroutine
+
+  subroutine gmres_csr_solver(n, ia, ja, a, b, x, maxit, tol)
+  implicit none
+  integer, intent(in) :: n
+  integer, intent(in) :: ia(:), ja(:)
+  real(8), intent(in) :: a(:), b(:)
+  real(8), intent(out) :: x(:)
+  integer, intent(in), optional :: maxit
+  real(8), intent(in), optional :: tol
+
+  ! Internal variables
+  integer :: i, j, iter
+  integer :: mmax
+  real(8) :: beta, res, alpha
+  real(8) :: tols
+  real(8), allocatable :: r(:), v(:,:), h(:,:), s(:), cs(:), sn(:), y(:)
+
+  ! Parameters
+  mmax = 100
+  if (present(maxit)) mmax = maxit
+  tols = 1.0d-8
+  if (present(tol)) tols = tol
+
+  ! Allocate arrays
+  allocate(r(n), v(n,mmax+1))
+  allocate(h(mmax+1,mmax))
+  allocate(s(mmax+1), cs(mmax), sn(mmax), y(mmax))
+
+  ! Initialize
+  x = 0.0d0
+
+  !----------------------------
+  ! GMRES algorithm
+  !----------------------------
+  call spmv_csr(n, ia, ja, a, x, r)
+  r = b - r
+  beta = norm2(n,r)
+  if (beta == 0.0d0) return
+  v(:,1) = r / beta
+  s = 0.0d0
+  s(1) = beta
+
+  do iter = 1, mmax
+     ! Arnoldi
+     call spmv_csr(n, ia, ja, a, v(:,iter), r)
+     do i = 1, iter
+        h(i,iter) = dot_vec(n, r, v(:,i))
+        call axpy(n, -h(i,iter), v(:,i), r)
+     end do
+     h(iter+1,iter) = norm2(n,r)
+     if (h(iter+1,iter) /= 0.0d0) then
+        v(:,iter+1) = r / h(iter+1,iter)
+     end if
+
+     ! Apply Givens rotations
+     do i = 1, iter-1
+        alpha = cs(i)*h(i,iter) + sn(i)*h(i+1,iter)
+        h(i+1,iter) = -sn(i)*h(i,iter) + cs(i)*h(i+1,iter)
+        h(i,iter) = alpha
+     end do
+
+     ! Compute new rotation
+     alpha = sqrt(h(iter,iter)**2 + h(iter+1,iter)**2)
+     if (alpha == 0.0d0) then
+        cs(iter) = 1.0d0
+        sn(iter) = 0.0d0
+     else
+        cs(iter) = h(iter,iter)/alpha
+        sn(iter) = h(iter+1,iter)/alpha
+     end if
+     h(iter,iter) = cs(iter)*h(iter,iter) + sn(iter)*h(iter+1,iter)
+     h(iter+1,iter) = 0.0d0
+     s(iter+1) = -sn(iter)*s(iter)
+     s(iter) = cs(iter)*s(iter)
+
+     res = abs(s(iter+1))
+     if (res < tols) exit
+  end do
+
+  if (iter==mmax) then
+     write(*,*) "GMRES did not converge"
+     STOP 1
+  else
+     write(*,*) "GMRES successful"
+  end if
+
+  ! Solve upper triangular system
+  y(1:iter) = s(1:iter)
+  do i = iter,1,-1
+     y(i) = y(i)/h(i,i)
+     do j = i-1,1,-1
+        y(j) = y(j) - h(j,i)*y(i)
+     end do
+  end do
+
+  ! Update solution
+  do i = 1, iter
+     call axpy(n, y(i), v(:,i), x)
+  end do
+
+  ! Deallocate
+  deallocate(r, v, h, s, cs, sn, y)
+
+end subroutine gmres_csr_solver
+
+!========================
+! Helper subroutines
+!========================
+
+subroutine spmv_csr(n, ia, ja, a, x, y)
+  integer, intent(in) :: n
+  integer, intent(in) :: ia(:), ja(:)
+  real(8), intent(in) :: a(:), x(:)
+  real(8), intent(out) :: y(:)
+  integer :: i, k
+  y = 0.0d0
+  do i = 1, n
+     do k = ia(i), ia(i+1)-1
+        y(i) = y(i) + a(k) * x(ja(k))
+     end do
+  end do
+end subroutine spmv_csr
+
+real(8) function dot_vec(n, x, y)
+  integer, intent(in) :: n
+  real(8), intent(in) :: x(:), y(:)
+  integer :: i
+  dot_vec = 0.0d0
+  do i = 1, n
+     dot_vec = dot_vec + x(i)*y(i)
+  end do
+end function dot_vec
+
+subroutine axpy(n, alpha, x, y)
+  integer, intent(in) :: n
+  real(8), intent(in) :: alpha
+  real(8), intent(in) :: x(:)
+  real(8), intent(inout) :: y(:)
+  integer :: i
+  do i = 1, n
+     y(i) = y(i) + alpha*x(i)
+  end do
+end subroutine axpy
+
+real(8) function norm2(n, x)
+  integer, intent(in) :: n
+  real(8), intent(in) :: x(:)
+  integer :: i
+  norm2 = 0.0d0
+  do i = 1, n
+     norm2 = norm2 + x(i)**2
+  end do
+  norm2 = sqrt(norm2)
+end function norm2
+
+
 
 !   function rtnewt(prev,eps,nst,p,t0,sum)
 !     integer::j
