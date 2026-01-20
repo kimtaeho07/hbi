@@ -1,0 +1,252 @@
+Working directory is /home/users/kimtaeho/Fervo/hbi/hbi_gaussianSource/examples
+Running on host sh02-01n01.int
+Time is Tue Feb 25 17:38:26 PST 2025
+test_job
+This job has allocated cpus
+ 
+This jobs runs on the following processors:
+sh02-01n01
+ 
+Output directory is /oak/stanford/groups/tchelepi/kimtaeho/Fervo/hbi/hbi_gaussianSource/pSig1
+ # of MPI cores           1
+ job number           1
+ Generating mesh
+ Generating kernel
+ ***************** HACApK start ********************
+nd=     10000 nofc=     10000 nffc=         1
+nrank=         1 nth=        10
+ param:
+ 1.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 1.000E+00 1.000E+00 1.000E+00
+
+ 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 1.500E+01 1.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 0.000E+00 0.000E+00 1.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 2.000E+00 1.000E+00 1.000E+02 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 2.000E+00
+
+ 3.000E+00 7.000E+00 1.000E+03 1.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 1.000E-04 1.000E-06 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 0.000E+00 0.000E+00 1.000E+01 0.000E+00 1.000E+00 0.000E+00 8.000E+00 0.000E+00 0.000E+00 0.000E+00
+
+ 1.000E-06 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 0.000E+00 5.000E+01 1.000E+01 0.000E+00
+
+No. of cluster=        2079
+ No. of nsmtx        7820       16856        8225
+    1:Rk-matrix 2: dense-mat 3:H-matrix
+ncpc=     7932576  ncpc/nrank=     7932576
+ time_supermatrix             =  3.044009208679199E-002
+ time_fill_hmtx               =  0.462910890579224     
+ time_construction_Hmatrix    =  0.495934963226318     
+ Maximun of kt=        36
+ Average of kt=        18
+ Memory of the H-matrix=   138.548171997070      (Mbyte)
+ Memory compression v.s. dense matrix=   18.1597860000000      (%)
+ Maximun memory of sub-matrices for a MPI=   138.548171997070      (Mbyte)
+ Minimun memory of sub-matrices for a MPI=   138.548171997070      (Mbyte)
+ Minimun memory/Maximun memory=   1.00000000000000     
+ Whole/(Maximun*Nrank)=   1.00000000000000     
+ Finished all initial processing, time(s)=  0.914881944656372     
+time step=1       0.00000003 yr
+time step=2       0.00000010 yr
+time step=3       0.00000022 yr
+time step=4       0.00000048 yr
+time step=5       0.00000098 yr
+time step=6       0.00000200 yr
+time step=7       0.00000403 yr
+time step=8       0.00000809 yr
+time step=9       0.00001620 yr
+time step=10       0.00003244 yr
+time step=11       0.00006491 yr
+time step=12       0.00012985 yr
+time step=13       0.00013095 yr
+time step=14       0.00013242 yr
+time step=15       0.00013480 yr
+time step=16       0.00013681 yr
+time step=17       0.00013897 yr
+time step=18       0.00014111 yr
+time step=19       0.00014310 yr
+time step=20       0.00014502 yr
+time step=21       0.00014694 yr
+time step=22       0.00014883 yr
+time step=23       0.00015066 yr
+time step=24       0.00015244 yr
+time step=25       0.00015419 yr
+time step=26       0.00015595 yr
+time step=27       0.00015780 yr
+time step=28       0.00015933 yr
+time step=29       0.00016118 yr
+time step=30       0.00016293 yr
+time step=31       0.00016472 yr
+time step=32       0.00016647 yr
+time step=33       0.00016815 yr
+time step=34       0.00016977 yr
+time step=35       0.00017135 yr
+time step=36       0.00017289 yr
+time step=37       0.00017439 yr
+time step=38       0.00017586 yr
+time step=39       0.00017728 yr
+time step=40       0.00017867 yr
+time step=41       0.00018004 yr
+time step=42       0.00018137 yr
+time step=43       0.00018268 yr
+time step=44       0.00018373 yr
+time step=45       0.00018480 yr
+time step=46       0.00018600 yr
+time step=47       0.00018684 yr
+time step=48       0.00018775 yr
+time step=49       0.00018871 yr
+time step=50       0.00018954 yr
+time step=51       0.00019041 yr
+time step=52       0.00019128 yr
+time step=53       0.00019206 yr
+time step=54       0.00019278 yr
+time step=55       0.00019351 yr
+time step=56       0.00019424 yr
+time step=57       0.00019492 yr
+time step=58       0.00019555 yr
+time step=59       0.00019618 yr
+time step=60       0.00019680 yr
+time step=61       0.00019738 yr
+time step=62       0.00019794 yr
+time step=63       0.00019849 yr
+time step=64       0.00019902 yr
+time step=65       0.00019953 yr
+time step=66       0.00020002 yr
+time step=67       0.00020050 yr
+time step=68       0.00020097 yr
+time step=69       0.00020141 yr
+time step=70       0.00020185 yr
+time step=71       0.00020227 yr
+time step=72       0.00020268 yr
+time step=73       0.00020307 yr
+time step=74       0.00020345 yr
+time step=75       0.00020382 yr
+time step=76       0.00020418 yr
+time step=77       0.00020453 yr
+time step=78       0.00020487 yr
+time step=79       0.00020520 yr
+time step=80       0.00020552 yr
+time step=81       0.00020583 yr
+time step=82       0.00020613 yr
+time step=83       0.00020642 yr
+time step=84       0.00020671 yr
+time step=85       0.00020698 yr
+time step=86       0.00020725 yr
+time step=87       0.00020751 yr
+time step=88       0.00020776 yr
+time step=89       0.00020801 yr
+time step=90       0.00020825 yr
+time step=91       0.00020848 yr
+time step=92       0.00020871 yr
+time step=93       0.00020893 yr
+time step=94       0.00020914 yr
+time step=95       0.00020935 yr
+time step=96       0.00020955 yr
+time step=97       0.00020975 yr
+time step=98       0.00020994 yr
+time step=99       0.00021013 yr
+time step=100       0.00021031 yr
+time step=101       0.00021048 yr
+time step=102       0.00021065 yr
+time step=103       0.00021082 yr
+time step=104       0.00021098 yr
+time step=105       0.00021114 yr
+time step=106       0.00021130 yr
+time step=107       0.00021145 yr
+time step=108       0.00021159 yr
+time step=109       0.00021174 yr
+time step=110       0.00021187 yr
+time step=111       0.00021201 yr
+time step=112       0.00021214 yr
+time step=113       0.00021227 yr
+time step=114       0.00021239 yr
+time step=115       0.00021252 yr
+time step=116       0.00021264 yr
+time step=117       0.00021275 yr
+time step=118       0.00021286 yr
+time step=119       0.00021297 yr
+time step=120       0.00021308 yr
+time step=121       0.00021319 yr
+time step=122       0.00021329 yr
+time step=123       0.00021339 yr
+time step=124       0.00021348 yr
+time step=125       0.00021358 yr
+time step=126       0.00021367 yr
+time step=127       0.00021376 yr
+time step=128       0.00021385 yr
+time step=129       0.00021393 yr
+time step=130       0.00021401 yr
+time step=131       0.00021410 yr
+time step=132       0.00021418 yr
+time step=133       0.00021425 yr
+time step=134       0.00021433 yr
+time step=135       0.00021440 yr
+time step=136       0.00021447 yr
+time step=137       0.00021454 yr
+time step=138       0.00021461 yr
+time step=139       0.00021468 yr
+time step=140       0.00021474 yr
+time step=141       0.00021481 yr
+time step=142       0.00021487 yr
+time step=143       0.00021493 yr
+time step=144       0.00021499 yr
+time step=145       0.00021504 yr
+time step=146       0.00021510 yr
+time step=147       0.00021515 yr
+time step=148       0.00021521 yr
+time step=149       0.00021526 yr
+time step=150       0.00021531 yr
+time step=151       0.00021536 yr
+time step=152       0.00021541 yr
+time step=153       0.00021546 yr
+time step=154       0.00021550 yr
+time step=155       0.00021555 yr
+time step=156       0.00021559 yr
+time step=157       0.00021563 yr
+time step=158       0.00021568 yr
+time step=159       0.00021572 yr
+time step=160       0.00021576 yr
+time step=161       0.00021580 yr
+time step=162       0.00021583 yr
+time step=163       0.00021587 yr
+time step=164       0.00021591 yr
+time step=165       0.00021594 yr
+time step=166       0.00021598 yr
+time step=167       0.00021601 yr
+time step=168       0.00021604 yr
+time step=169       0.00021608 yr
+time step=170       0.00021611 yr
+time step=171       0.00021614 yr
+time step=172       0.00021617 yr
+time step=173       0.00021620 yr
+time step=174       0.00021622 yr
+time step=175       0.00021625 yr
+time step=176       0.00021628 yr
+time step=177       0.00021631 yr
+time step=178       0.00021633 yr
+time step=179       0.00021636 yr
+time step=180       0.00021638 yr
+time step=181       0.00021641 yr
+time step=182       0.00021643 yr
+time step=183       0.00021645 yr
+time step=184       0.00021648 yr
+time step=185       0.00021650 yr
+time step=186       0.00021652 yr
+time step=187       0.00021654 yr
+time step=188       0.00021656 yr
+time step=189       0.00021658 yr
+time step=190       0.00021660 yr
+time step=191       0.00021662 yr
+time step=192       0.00021664 yr
+time step=193       0.00021666 yr
+time step=194       0.00021667 yr
+time step=195       0.00021669 yr
+ normal stress below 0.2MPa
+ time(s)  1.121997833251953E-003   9.20810222625732     
+ time for matvec(s)   3.84744930267334        3.81463289260864     

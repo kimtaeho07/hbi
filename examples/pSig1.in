@@ -1,0 +1,36 @@
+filenumber 1
+setting injection
+problem 3dp
+injectionfromfile F
+pressuredependent F
+imax 100
+jmax 100 
+interval  1 !output and checkpointing every 100 steps
+nstep     1000 !time steps
+tmax   0.0011415525 !maximum time (year)
+dtout 0.00011415525
+ds 0.01 !element size
+parameterfromfile F !nonuniform parameters
+backslip T
+vpl 0d0
+kpmax 1e-14
+kpmin 1e-14
+kT 1e10
+kL 1e-3
+beta 5e-8
+eta 0.89e-3
+phi0 0.2
+q0 0.04167
+vref 1e-6
+a 0.013
+b 0.005
+dc 1e-4
+f0 0.6
+muinit 0.55
+sigmainit 28.5
+velinit 1d-12
+bc Dirichlet
+pbc 0d0
+pfinit 0d0
+pSig 1e-3
+fwid 1e0

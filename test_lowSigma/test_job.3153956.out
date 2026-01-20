@@ -1,0 +1,11 @@
+Working directory is /home/users/kimtaeho/Fervo/hbi/3IstimTest/test_lowSigma
+Running on host sh03-09n60.int
+Time is Mon Aug 4 14:50:13 PDT 2025
+inPtest
+This job has allocated cpus
+ 
+This jobs runs on the following processors:
+sh03-09n60
+ 
+Output directory is /oak/stanford/groups/tchelepi/kimtaeho/Fervo/hbi/3IstimTest/test_lowSigma/output
+ # of MPI cores           1
