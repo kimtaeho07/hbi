@@ -61,8 +61,8 @@ program main
 
   real(8),allocatable::rdata(:),qvals(:,:),qtimes(:,:)
   integer,allocatable::iwell(:),jwell(:),kleng(:)
-  integer::lp,i,i_,j,k,kstart,kend,m,counts,interval,lrtrn,nl,ios,nmain,rk,nout(10),file_size,nwell
-  integer::hypoloc(1),load,eventcount,thec,inloc,sw,errmaxloc,niter,mvelloc(1),locid(10)
+  integer::lp,i,i_,j,k,kstart,kend,m,counts,interval,lrtrn,nl,ios,nmain,rk,nout(12),file_size,nwell
+  integer::hypoloc(1),load,eventcount,thec,inloc,sw,errmaxloc,niter,mvelloc(1),locid(20)
 
   !controls
   logical::aftershock,buffer,nuclei,slipping,outfield,slipevery,limitsigma,dcscale,slowslip,slipfinal,outpertime
@@ -70,8 +70,8 @@ program main
   character*128::fname,dum,law,input_file,problem,geofile,param,pvalue,slipmode,project,parameter_file,outdir,command,bcl,bcr,bc,evlaw,setting
   character(128)::injection_file
   real(8)::a0,a1,b0,dc0,sr,omega,theta,dtau,tiny,moment,wid,normal,ieta,meanmu,meanmuG,meandisp,meandispG,moment0,mvel,mvelG,mpf
-  real(8)::vc0,mu0,onset_time,tr,vw0,fw0,velmin,tauinit,intau,trelax,maxnorm,maxnormG,minnorm,minnormG,sigmainit,muinit
-  real(8)::r,vpl,outv,xc,zc,dr,dx,dz,lapse,dlapse,vmaxeventi,sparam,tmax,dtmax,tout,dummy(10)
+  real(8)::vc0,mu0,onset_time,tr,vw0,fw0,velmin,tauinit,intau,trelax,maxnorm,maxnormG,minnorm,minnormG,sigmainit,muinit,minnormPf
+  real(8)::r,vpl,outv,xc,zc,dr,dx,dz,lapse,dlapse,vmaxeventi,sparam,tmax,dtmax,tout,dummy(10),dtmax_postStim
   real(8)::ds0,amp,mui,velinit,phinit,velmax,maxsig,minsig,v1,dipangle,crake,s,sg,q0,vref
   real(8)::kpmax,kpmin,kp0,kT,kL,s0,ksinit,dtout,pfinit,pbcl,pbcr,lf,eta,beta,phi0,str,cc,td,cd,pSig,rCol2,cDiff
 
@@ -83,7 +83,7 @@ program main
   real(8)::x !time
   real(8),allocatable::y(:),yscal(:),dydx(:),yg(:)
   real(8)::eps_r,errmax_gb,dtinit,dtnxt,dttry,dtdid,dtmin,tp,fwid
-  real(8)::wfrac,Lfrac,Hfrac,Nfrac,Lfrac_sep,pinj
+  real(8)::wfrac,Hfrac,Nfrac,Lfrac_sep,pinj
 
   integer::r1,r2,r3,NVER,amari,out,kmax,loci,locj,loc,stat,nth
   integer,allocatable::rupsG(:)
@@ -91,18 +91,30 @@ program main
   ! For fracture intersections and stimulation
   character(10)::tempIntStr
   character(128)::injStgFileName, delanoLocFileName
-  integer::numStages
-  integer,allocatable::stages(:),fracMeanPoints_x_idx(:),fracMeanPoints_z_idx_start(:),fracMeanPoints_z_idx_end(:)
-  real(8),allocatable::fracHeights(:),fracMeanPoints_x(:),fracMeanPoints_z(:),stimPressures(:),stimStartTimes(:),stimDurs(:)
+  integer::numStages, numStages_temp
+  
+  integer,allocatable::stages(:)
+  integer,allocatable::fracMeanPoints_x_idx(:,:),fracMeanPoints_z_idx_start(:,:),fracMeanPoints_z_idx_end(:,:)
+  real(8),allocatable::fracHeights(:),Sfracs(:),curLfracs(:),Lfracs(:),fracMeanPoints_x(:,:),fracMeanPoints_z(:,:),stimPressures(:),stimStartTimes(:),stimDurs(:),aVinsom(:,:),bVinsom(:,:),dVinsom(:),I_n(:,:),aVinsom_prev(:,:),dVinsom_prev(:),I_n_prev(:,:),d2Fault_temp(:),d2Fault_Top(:,:),d2Fault_Bot(:,:),carterCofs(:),avgInjRates(:)
+  integer::stage_temp, clusterNum
+  real(8)::stimPressures_temp, stimStartTimes_temp, stimDurs_temp,carterCofs_temp, avgInjRates_temp,Lfracs_temp,cumVols_temp
+
+  real(8)::kRes,cRes,phiRes
   real(8)::delanoLoc(2)
   integer::delanoLoc_x_idx, delanoLoc_z_idx
-  logical,allocatable::stimStarted(:)
   real(8)::tanh_alpha
+ 
+  integer::l,l_start,l_end
 
-  type :: ArrayHolder
-      real, allocatable :: values(:)
-  end type ArrayHolder
-  type(ArrayHolder), allocatable :: pfBeforeStim(:)
+  type :: ArrayHolder_real
+      real, allocatable :: values(:,:)
+  end type ArrayHolder_real
+  type(ArrayHolder_real), allocatable :: d2Fault(:),fracPres(:),fracPres_prev(:),pfBeforeStim(:),faultStimStartTimes(:)
+
+  type :: ArrayHolder_bool
+      logical, allocatable :: values(:,:)
+  end type ArrayHolder_bool
+  type(ArrayHolder_bool), allocatable :: fracReachedFault(:),stimStarted_onFault(:)
 
   !initialize
   icomm=MPI_COMM_WORLD
@@ -227,6 +239,8 @@ program main
       read (pvalue,*) dtinit
     case('dtmax')
       read (pvalue,*) dtmax
+    case('dtmax_postStim')
+      read (pvalue,*) dtmax_postStim
     case('sparam')
       read (pvalue,*) sparam
     case('q0')
@@ -249,6 +263,10 @@ program main
       read (pvalue,*) kL
     case('kT')
       read (pvalue,*) kT
+    case('kRes')
+      read (pvalue,*) kRes
+    case('phiRes')
+      read (pvalue,*) phiRes
     case('cd')
       read (pvalue,*) cd
     case('td')
@@ -317,8 +335,6 @@ program main
       read(pvalue,*) fwid
     case('wfrac')
           read(pvalue,*) wfrac
-    case('Lfrac')
-          read(pvalue,*) Lfrac
     case('Hfrac')
           read(pvalue,*) Hfrac
     case('Nfrac')
@@ -333,6 +349,8 @@ program main
           read(pvalue,*) delanoLocFileName
     case('tanh_alpha')
           read(pvalue,*) tanh_alpha
+    case('clusterNum')
+      read (pvalue,*) clusterNum
     end select
   end do
   close(33)
@@ -567,71 +585,231 @@ program main
     close(99)
   end if
 
+  ! Calculate reservoir diffusivity
+  cRes = kRes/(eta*beta*phiRes) * 1d-6
+
   ! Read in injection data
   write(fname,'("input/",A)') trim(injStgFileName)
   open(199,file=fname)
   read(199,*) numStages
 
-  write(*,*) "numStages: ", numStages
+  write(*,*) "numStages originally: ", numStages
+  allocate(stages(0))
+  allocate(carterCofs(0))
+  allocate(avgInjRates(0))
+  allocate(stimPressures(0))
+  allocate(stimStartTimes(0))
+  allocate(stimDurs(0))
+  allocate(Lfracs(0))
 
-  allocate(stages(numStages))
+  allocate(d2Fault_temp(2*clusterNum))
+  d2Fault_temp = HUGE(1.0D0)
+
+  ! Neglect stages where fracture does not reach the fault
+  do i=1,numStages
+    read(199,*) stage_temp
+
+    write(fname,'("input/fracture",i0,"StimPressure.txt")') stage_temp
+    open(30000+i, file=fname)
+    read(30000+i,*) stimPressures_temp
+    close(30000+i)
+
+    write(fname,'("input/fracture",i0,"StimTimes.txt")') stage_temp
+    open(40000+i, file=fname)
+    read(40000+i,*) stimStartTimes_temp, stimDurs_temp
+    close(40000+i)
+
+    write(fname,'("input/stage",i0,"CumVol.txt")') stage_temp
+    open(60000, file=fname)
+    read(60000,*) cumVols_temp
+    close(60000)
+    avgInjRates_temp = cumVols_temp/stimDurs_temp/clusterNum
+
+    ! Calculate Carter leakoff coefficients 
+    carterCofs_temp = kRes/(eta*1.d-6)*(StimPressures_temp-pfinit)/dsqrt(pi*cRes*1.d6)
+
+    ! Calculate final crack length
+    Lfracs_temp = avgInjRates_temp/(pi*carterCofs_temp*Hfrac)*(stimDurs_temp)**0.5
+
+    do j=1,clusterNum
+      ! Top
+      write(fname,'("input/fracture",i0,"d2FaultTop",i0,".txt")') stage_temp, j
+      fname = trim(adjustl(fname))
+      open(10000, file=fname, status='old', action='read', iostat=ios)
+      if (ios == 0) then
+          read(10000,*,iostat=ios) d2Fault_temp((j-1)*2+1)
+          if (ios /= 0) write(*,*) "WARN: Bad read from ", trim(fname)
+          close(10000)
+      else
+          write(*,*) "WARN: Missing file ", trim(fname)
+      endif
+
+      ! Bottom
+      write(fname,'("input/fracture",i0,"d2FaultBot",i0,".txt")') stage_temp, j
+      fname = trim(adjustl(fname))
+      open(10000, file=fname, status='old', action='read', iostat=ios)
+      if (ios == 0) then
+          read(10000,*,iostat=ios) d2Fault_temp((j-1)*2+2)
+          if (ios /= 0) write(*,*) "WARN: Bad read from ", trim(fname)
+          close(10000)
+      else
+          write(*,*) "WARN: Missing file ", trim(fname)
+      endif    
+
+    end do
+
+    ! If fracture reaches the fault, add it to the stage list
+    write(*,*) "Fracture length during stage", stage_temp, "is", Lfracs_temp, "m"
+    write(*,*) "Shortest distance to fault from stage", stage_temp, "is", minval(d2Fault_temp), "m"
+
+    if (Lfracs_temp .GE. minval(d2Fault_temp)) then
+      stages = [stages, stage_temp]
+      StimPressures = [StimPressures, StimPressures_temp]
+      StimStartTimes = [StimStartTimes, StimStartTimes_temp]
+      StimDurs = [StimDurs, StimDurs_temp]
+      avgInjRates = [avgInjRates, avgInjRates_temp]
+      Lfracs = [Lfracs, Lfracs_temp]
+      carterCofs = [carterCofs, carterCofs_temp]
+    end if
+  end do 
+
+  ! Record final size of stages to account for
+  numStages = size(stages)
+    
+  write(*,*) "There are ", numStages, "stages with fractures that reach the fault"
+  write(*,*) "They are: ", stages
+
+  ! Allocate arrays for stage tracking
   allocate(fracHeights(numStages))
-  allocate(fracMeanPoints_x(numStages))
-  allocate(fracMeanPoints_z(numStages))
-  allocate(fracMeanPoints_x_idx(numStages))
-  allocate(fracMeanPoints_z_idx_start(numStages))
-  allocate(fracMeanPoints_z_idx_end(numStages))
-  allocate(stimPressures(numStages))
-  allocate(stimStartTimes(numStages))
-  allocate(stimDurs(numStages))
-  allocate(stimStarted(numStages))
+
+  allocate(fracMeanPoints_x(numStages, clusterNum))
+  allocate(fracMeanPoints_z(numStages, clusterNum))
+  allocate(fracMeanPoints_x_idx(numStages, clusterNum))
+  allocate(fracMeanPoints_z_idx_start(numStages, clusterNum))
+  allocate(fracMeanPoints_z_idx_end(numStages, clusterNum))
+
+  allocate(d2Fault_Top(numStages, clusterNum))
+  allocate(d2Fault_Bot(numStages, clusterNum))
+  allocate(d2Fault(numStages))
+
+  allocate(curLfracs(numStages))
+  allocate(Sfracs(numStages))
+
+  allocate(stimStarted_onFault(numStages))
+  allocate(faultStimStartTimes(numStages))
+
+  allocate(fracPres(numStages))
+  allocate(fracPres_prev(numStages))
+  allocate(fracReachedFault(numStages))
   allocate(pfBeforeStim(numStages))
 
-  do i=1,numStages
-    read(199,*) stages(i)
+  allocate(aVinsom(numStages, clusterNum))
+  allocate(bVinsom(numStages, clusterNum))
+  allocate(dVinsom(numStages))
+  allocate(I_n(numStages, clusterNum))
+  allocate(aVinsom_prev(numStages, clusterNum))
+  allocate(dVinsom_prev(numStages))
+  allocate(I_n_prev(numStages, clusterNum))
 
-    write(fname,'("input/fracture",i0,"Height.txt")') stages(i)
+
+  aVinsom = 0.0
+  bVinsom = 0.0
+  dVinsom = 0.0
+  I_n = 0.0
+
+  aVinsom_prev = 0.0
+  dVinsom_prev = 0.0
+  I_n_prev = 0.0
+  
+  do i=1,numStages
+    write(fname,'("input/fracture",i0,"Height1.txt")') stages(i)
     open(10000+i, file=fname)
     read(10000+i,*) fracHeights(i)
     close(10000+i)
 
-    write(fname,'("input/fracture",i0,"MeanPoint.txt")') stages(i)
-    open(20000+i, file=fname)
-    read(20000+i,*) fracMeanPoints_x(i), fracMeanPoints_z(i)
-    close(20000+i)
+    do j=1,clusterNum
+      write(fname,'("input/fracture",i0,"MeanPoint",i0,".txt")') stages(i), j
+      open(20000+i, file=fname)
+      read(20000+i,*) fracMeanPoints_x(i,j), fracMeanPoints_z(i,j)
+      close(20000+i)
 
-    write(fname,'("input/fracture",i0,"StimPressure.txt")') stages(i)
-    open(30000+i, file=fname)
-    read(30000+i,*) stimPressures(i)
-    close(30000+i)
-   
-    write(fname,'("input/fracture",i0,"StimTimes.txt")') stages(i)
-    open(40000+i, file=fname)
-    read(40000+i,*) stimStartTimes(i), stimDurs(i)
-    close(40000+i)
+      write(fname,'("input/fracture",i0,"d2FaultTop",i0,".txt")') stages(i), j
+      fname = trim(adjustl(fname))
+      open(10000, file=fname, status='old', action='read', iostat=ios)
+      read(10000,*,iostat=ios) d2Fault_Top(i,j)
+
+      ! Bottom
+      write(fname,'("input/fracture",i0,"d2FaultBot",i0,".txt")') stages(i), j
+      fname = trim(adjustl(fname))
+      open(10000, file=fname, status='old', action='read', iostat=ios)
+      read(10000,*,iostat=ios) d2Fault_Bot(i,j)
+    end do
+    
    end do
   close(199)
 
   do i=1,numStages
     fracHeights(i) = fracHeights(i)/1e3
-    fracMeanPoints_x(i) = fracMeanPoints_x(i)/1e3
-    fracMeanPoints_z(i) = fracMeanPoints_z(i)/1e3
 
-    ! if ((stages(i) == 12) .or. (stages(i) == 13)) then
-    !     stimPressures(i) = stimPressures(i) + 20.0
-    ! end if 
+    do j=1,clusterNum
+      fracMeanPoints_x(i,j) = fracMeanPoints_x(i,j)/1e3
+      fracMeanPoints_z(i,j) = fracMeanPoints_z(i,j)/1e3
 
-    fracMeanPoints_x_idx(i) = (argmin(abs(xcol-fracMeanPoints_x(i)))-1)/jmax + 1
-    fracMeanPoints_z_idx_start(i) = modulo(argmin(abs(fracMeanPoints_z(i)+fracHeights(i)/2-zcol)), imax)
-    fracMeanPoints_z_idx_end(i) = modulo(argmin(abs(fracMeanPoints_z(i)-fracHeights(i)/2-zcol)), imax)
+      fracMeanPoints_x_idx(i,j) = (argmin(abs(xcol-fracMeanPoints_x(i,j)))-1)/jmax + 1
+      fracMeanPoints_z_idx_start(i,j) = modulo(argmin(abs(fracMeanPoints_z(i,j)+fracHeights(i)/2-zcol)), imax)
+
+      ! For first cluster, calculate index spacing in height
+      if (j .EQ. 1) then 
+        fracMeanPoints_z_idx_end(i,j) = modulo(argmin(abs(fracMeanPoints_z(i,j)-fracHeights(i)/2-zcol)), imax)
+
+      ! For all subsequent, keep index spacing the same, to simplify array size allocation
+      else
+        fracMeanPoints_z_idx_end(i,j) = fracMeanPoints_z_idx_start(i,j) + (fracMeanPoints_z_idx_end(i,1) - fracMeanPoints_z_idx_start(i,1))
+      end if
+
+      write(*,*) "For fracture", stages(i), " and cluster", j, "mean pointx indices:", fracMeanPoints_x_idx(i,j), fracMeanPoints_z_idx_start(i,j), fracMeanPoints_z_idx_end(i,j)
+
+    end do
+
+    allocate(fracReachedFault(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+    fracReachedFault(i)%values = .FALSE.
+    allocate(d2Fault(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+    allocate(pfBeforeStim(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+    allocate(fracPres(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+    allocate(fracPres_prev(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+    allocate(stimStarted_onFault(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+    stimStarted_onFault(i)%values = .FALSE.
+    allocate(faultStimStartTimes(i)%values(clusterNum, fracMeanPoints_z_idx_end(i,1)-fracMeanPoints_z_idx_start(i,1)+1))
+
+    ! Calculate distance from each fracture/fault intersection to well
+    do j=1,clusterNum
+       l_start = fracMeanPoints_z_idx_start(i,j) + (fracMeanPoints_x_idx(i,j)-1)*jmax
+       l_end = fracMeanPoints_z_idx_end(i,j) + (fracMeanPoints_x_idx(i,j)-1)*jmax
+
+       do k=1,(l_end-l_start+1)
+          l = fracMeanPoints_z_idx_start(i,j) + (k-1) + (fracMeanPoints_x_idx(i,j)-1)*jmax
+          d2Fault(i)%values(j,k) = d2Fault_Top(i,j)+(d2Fault_Bot(i,j)-d2Fault_Top(i,j))/(zcol(l_end)-zcol(l_start))*(zcol(l)-zcol(l_start))
+       end do
+
+    end do
     
-    write(*,*) "For fracture", stages(i), "mean pointx indices:", fracMeanPoints_x_idx(i), fracMeanPoints_z_idx_start(i), fracMeanPoints_z_idx_end(i)
-
-    stimStarted(i) = .FALSE.
-
-    allocate(pfBeforeStim(i)%values(fracMeanPoints_z_idx_end(i)-fracMeanPoints_z_idx_start(i)+1))
+    write(*,*) "d2Fault: ", d2Fault(i)%values
+    ! call find_locid(fracMeanPoints_x_idx(i), fracMeanPoints_z_idx_start(i), locid(6+i))
   end do
-  
+
+
+  ! Calculate volumetric storage of fracture
+  Sfracs = (Lfracs*Hfrac*Hfrac*1.d-9*pi*(1-pois)/(2*rigid*1.d3))
+
+  ! Calculate Carter leakoff coefficients 
+  carterCofs = kRes/(eta*1.d-6)*(StimPressures-pfinit)/dsqrt(pi*cRes*1.d6)
+
+  ! Initialize fracture pressure
+  do i=1,numStages 
+     fracPres(i)%values = 0.0
+     fracPres_prev(i)%values = 0.0
+  end do
+    
   if(.not.backslip) then
     taudot=sr
     sigdot=0d0
@@ -751,6 +929,7 @@ program main
   meanmuG=sum(mu)/NCELLg
   minnormG=minval(sigmae)
   maxnormG=maxval(sigmae)
+  minnormPf=minval(pf)
   meandispG=sum(disp)/NCELLg
 
   if(injectionfromfile) call input_well()
@@ -829,7 +1008,7 @@ tout=dtout*365*24*60*60
     !write(*,*)'call implicit solver'
     call MPI_BARRIER(MPI_COMM_WORLD,ierr)
 
-    ! if(.not.pfconst) then
+    ! if(.noxnormGt.pfconst) then
     !   if(pressuredependent) then
     !     !call implicitsolver(pf,sigma,ks,dtdid,x,dtnxt)
     !   else
@@ -838,7 +1017,7 @@ tout=dtout*365*24*60*60
     ! end if
     !write(*,*)maxval(pf)
        
-    call implicitsolver2(pf,sigma,ks,dtdid,x,dtnxt,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
+    call implicitsolver2(pf,sigma,ks,dtdid,x,dtnxt,niter)
 
     ! !$omp parallel do
     ! do i = 1, NCELLg
@@ -868,9 +1047,10 @@ tout=dtout*365*24*60*60
     ! limitsigma
     if(limitsigma) then
       do i=1,NCELLg
-        if (yg(4*i-1)<minsig) then 
-          sigma(i)=pf(i)+minsig+pfinit
-        end if 
+        ! if (yg(4*i-1)<minsig) sigma(i)=pf(i)+minsig+pfinit
+        if ((sigma(i)-pf(i)-pfinit)<minsig) then
+           sigma(i)=pf(i)+minsig+pfinit
+        end if
         !if(yg(4*i-1)>maxsig) yg(4*i-1)=maxsig
       end do
     end if
@@ -921,6 +1101,7 @@ tout=dtout*365*24*60*60
     meanmuG=sum(mu)/NCELLg
     minnormG=minval(sigmae)
     maxnormG=maxval(sigmae)
+    minnormPf=maxval(pf)
     meandispG=sum(disp)/NCELLg
 
     Call MPI_BARRIER(MPI_COMM_WORLD,ierr)
@@ -1093,7 +1274,7 @@ contains
 subroutine output_monitor()
   implicit none
   time2=MPi_Wtime()
-  write(52,'(i7,f19.4,7e16.5,f16.4,i6)')k,x,log10(mvelG),meandispG,meanmuG,maxnormG,minnormG,errmax_gb,dtdid,time2-time1,niter
+  write(52,'(i7,f19.4,7e16.5,f16.4,i6)')k,x,log10(mvelG),meandispG,meanmuG,maxnormG,minnormG,errmax_gb,dtdid,minnormPf,niter
 end subroutine
 subroutine output_local(nf,loc)
   implicit none
@@ -1393,63 +1574,113 @@ end subroutine coordinate3dp
     end do
 
   end subroutine
-  subroutine implicitsolver2(pf,sigma,ks,h,time,dtnxt,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
+  subroutine implicitsolver2(pf,sigma,ks,h,time,dtnxt,niter)
     implicit none
     integer::kit,errloc(1),l,l_
-    integer,intent(in)::numStages,fracMeanPoints_x_idx(:),fracMeanPoints_z_idx_start(:),fracMeanPoints_z_idx_end(:)
-    real(8),intent(in)::stimStartTimes(:),stimDurs(:),stimPressures(:)
     integer,intent(out)::niter
     real(8),intent(inout)::pf(:),dtnxt
     real(8),intent(in)::h,time,sigma(:),ks(:)
-    real(8)::dpf(ncellg),pfd(imax,jmax),pfnew(imax,jmax),sigmae(ncellg),cdiff(imax,jmax),err,err0,adpf(ncellg)
+    real(8)::dpf(ncellg),pfd(imax,jmax),pftry(imax,jmax),pfnew(imax,jmax),sigmae(ncellg),cdiff(imax,jmax),err,err0,adpf(ncellg)
     real(8),parameter::dpth=0.1
+    integer,parameter::kitmax=200
+    real(8)::hCurrent,timePressure
     !real(8),parameter::cc=1d-12 !beta(1e-8)*phi(1e-1)*eta(1e-3)
     cdiff=0d0
+
+    ! Target step size we want to reach
+    hCurrent=h
+    timePressure=time
 
     do l=1,ncellg
       !sigma(l)=sigmae(l)+pf(l)
       i=(l-1)/jmax+1
       j=l-(i-1)*jmax
-      cc=eta*beta*phi0
-      pfd(i,j)=pf(l)
-      cdiff(i,j)=ks(l)/cc*1d-6 !Pa-->MPa
-      !cdiff(i,j)=kpmax/cc*1d-6 !Pa-->MPa
-      !write(*,*) l_,i,j
+      pftry(i,j) = pf(l)
     end do
-    !write(*,*) pfd
 
-    err=0d0
+    do while ( timePressure .LE. (time+h) )
+        err=0d0
 
-      call Beuler(pfd,cdiff,h,pfnew,time,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
+       do kit=1,kitmax
+         do l=1,ncellg
+           !sigma(l)=sigmae(l)+pf(l)
+           i=(l-1)/jmax+1
+           j=l-(i-1)*jmax
+           cc=eta*beta*phi0
+           pfd(i,j)=pf(l)
+           cdiff(i,j)=ks(l)*exp(-(sigma(l)-pftry(i,j)-pfinit)/s0)/cc*1d-6
+           !cdiff(i,j)=kpmax/cc*1d-6 !Pa-->MPa
+           !write(*,*) l_,i,j
+         end do
+         !write(*,*) pfd
 
-      do l=1,ncellg
-        i=(l-1)/jmax+1
-        j=l-(i-1)*jmax
-        dpf(l)=pfnew(i,j)-pf(l)
-        pf(l)=pfnew(i,j)
-      end do
-      !write(*,*)sum(pf)
+         call Beuler(pfd,cdiff,hCurrent,pfnew,timePressure,niter)
+
+         err=maxval(abs(pftry-pfnew))
+         !write(*,*) pftry
+         !write(*,*) pfnew
+         !write(*,*) 'err',err
+         if(err<1e-3) exit
+         pftry=pfnew
+         err0=err
+       end do
+
+       if (kit .GT. kitmax) then
+          write(*,*) "nonlinear iteration failed. Halving time step."
+          hCurrent = hCurrent/2.d0
+          pftry = pfd
+        else
+          write(*,*) "nonlinear iteration for pressure solving suceeded with ", kit, " iterations"
+          timePressure = timePressure + hCurrent
+          pfd = pfnew
+          pftry = pfnew
+        end if
+
+    end do ! Time step has been achieved
+
+    ! Update matrix leak-off solution parameters
+    aVinsom_prev = aVinsom
+    dVinsom_prev = dVinsom
+    I_n_prev = I_n
+    fracPres_prev = fracPres 
+
+    do l=1,ncellg
+      i=(l-1)/jmax+1
+      j=l-(i-1)*jmax
+      dpf(l)=pfnew(i,j)-pf(l)
+      pf(l)=pfnew(i,j)
+    end do
+    !write(*,*)sum(pf)
 
     !write(*,*) 'niter',niter
       adpf=abs(dpf)
     !write(*,*) 'dpf',maxval(adpf)
     if(dtnxt/h*maxval(adpf)>dpth)  dtnxt=dpth*h/maxval(adpf)
+    if (((time+h+dtnxt) .GT. minval(stimStartTimes) - dtmax) .and. (dtnxt .GT. dtmax_postStim)) dtnxt=dtmax_postStim
     return
   end subroutine
 
-  subroutine Beuler(pf,cdiff,h,pfnew,time,niter,numStages,fracMeanPoints_x_idx,fracMeanPoints_z_idx_start,fracMeanPoints_z_idx_end,stimStartTimes,stimPressures,stimDurs)
+  subroutine Beuler(pf,cdiff,h,pfnew,time,niter)
     implicit none
     integer,parameter::itermax=1000
-    integer,intent(in)::numStages,fracMeanPoints_x_idx(:),fracMeanPoints_z_idx_start(:),fracMeanPoints_z_idx_end(:)
-    real(8),intent(in)::pf(:,:),h,cdiff(:,:),time,stimStartTimes(:),stimDurs(:),stimPressures(:)
+    real(8),intent(in)::pf(:,:),h,cdiff(:,:),time
     real(8),intent(out)::pfnew(:,:)
     integer,intent(out)::niter
     real(8)::Dxx(imax,jmax,3),Dyy(imax,jmax,3),Amx(imax,jmax,3),Amy(imax,jmax,3),mx(imax,jmax),my(imax,jmax)
     real(8)::p(imax,jmax),m(imax,jmax),r(imax,jmax),x(imax,jmax),b(imax,jmax),SAT(imax,jmax)
-    integer::n,iter,i,j,k,kwell,Nfrac_div2,istep_Lfrac_sep,jOffset_Hfrac,l_start,l_end
-    real(8)::p0=0.0,rsold,rsnew,tmp1,tmp2,alpha,v1,v0,t1,t0,qtmp,pdrop
+    integer::n,iter,i,j,k,l,kwell,Nfrac_div2,istep_Lfrac_sep,jOffset_Hfrac,l_cur
+    real(8)::p0=0.0,rsold,rsnew,tmp1,tmp2,alpha,v1,v0,t1,t0,qtmp,pdrop,leakOff2Fault
     real(8),parameter::tol=1e-4
     real(8),parameter::sourceTermFactor=1e2
+    integer :: info
+    integer:: nnz
+    real(8):: b1D(imax*jmax), b1Dtemp(imax*jmax)
+    integer, allocatable, target:: iaSparse(:), jaSparse(:)
+    real(8), allocatable, target:: aSparse(:)
+    real(8),parameter::penaltyAlpha = 1e8
+    real(8)::maxAval
+
+
     !real(8),parameter::str=1e-11 !beta(1e-9)*phi(1e-2)
     niter=0
     p=0d0;m=0d0;r=0d0;x=0d0;b=0d0
@@ -1545,58 +1776,90 @@ end subroutine coordinate3dp
   
     x=pf !initial guess
 
-    if(setting=='ss') then
-      SAT(1,:)=-q0/beta/phi0*1e-9*h/ds0*2
-      SAT(imax,:)=q0/beta/phi0*1e-9*h/ds0*2
-    end if
-
     b=pf-SAT
 
-    ! if(setting=='injection') then
-    ! if(injectionfromfile) then
-    !   qtmp=0d0
-    !   do kwell=1,nwell
-    !     do k=1,kleng(kwell)-1
-    !     t0=qtimes(kwell,k)
-    !     t1=qtimes(kwell,k+1)
-    !     v0=qvals(kwell,k)
-    !     v1=qvals(kwell,k+1)
-    !     if (time >= t0 .and. time <= t1) then
-    !       qtmp=(v1-v0)/(t1-t0)*(time-t0)+v0
-    !     else if (time > t1.and. k == kleng(kwell)-1) then
-    !       qtmp=v1
-    !     end if
-    !     end do
-    !     i=iwell(kwell)
-    !     j=jwell(kwell)
-    !     !write(*,*)i,j,qtmp
-    !     b(i,j)=b(i,j)+h*qtmp/beta/phi0*1e-12/ds0/ds0
-    !   end do
-    ! else
-    !   b(imax/2,jmax/2)=b(imax/2,jmax/2)+h*q0/beta/phi0*1e-12/ds0/ds0
-    ! end if
-    ! end if
+    maxAval = abs(maxval(A))
 
+    ! Enforce pressure conditions at fracture intersections
     do i=1,numStages
-       if  (time .GE. stimStartTimes(i)) then
-           ! Remember the pressure at the fractures right before stimulation
-           ! started. We wil use this to gradually increase the fracture
-           ! pressure so that we avoid exceeding the maximum slip rate
-           ! threshold.
-           if (.NOT. stimStarted(i)) then
-               pfBeforeStim(i)%values = pf(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i))
-               stimStarted(i) = .TRUE.
-           end if
+       if  (time .GE. stimStartTimes(i) .and. time .LE. stimStartTimes(i)+stimDurs(i)) then
+           ! Start PKN fracture growth model
+           if (time .GT. (stimStartTimes(i)+stimDurs(i))) then
+              curLfracs(i) = avgInjRates(i)/(pi*carterCofs(i)*Hfrac)*(stimDurs(i))**0.5
+           else 
+              curLfracs(i) = avgInjRates(i)/(pi*carterCofs(i)*Hfrac)*(time-stimStartTimes(i))**0.5
+           end if 
+        
+           ! Update characteristic diffusion length in Vinsome & Westerweld semi-analytical estimate
+           dVinsom(i) = dsqrt(cRes*(time-stimStartTimes(i)))/2
 
-           Amx(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),1) = 0.0
-           Amx(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),2) = 0.5
-           Amx(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),3) = 0.0
-           Amy(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),1) = 0.0
-           Amy(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),2) = 0.5
-           Amy(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i),3)= 0.0
-           b(fracMeanPoints_x_idx(i),fracMeanPoints_z_idx_start(i):fracMeanPoints_z_idx_end(i)) = (stimPressures(i)-pfinit-pfBeforeStim(i)%values)*dtanh((time-stimStartTimes(i))/tanh_alpha) + pfBeforeStim(i)%values
-       else
-           stimStarted(i) = .FALSE.
+           ! Mark which clusters have reached the fault
+           fracReachedFault(i)%values = curLfracs(i) .GT. d2Fault(i)%values
+           
+           do j=1,clusterNum
+              do k=1,SIZE(fracReachedFault(i)%values, DIM=2) 
+                 
+                 ! If cluster has reached fault, then apply internal boundary conditions there
+                 if (fracReachedFault(i)%values(j,k)) then
+
+                    ! Record initial pressure at fault to give smooth increase to pressure
+                    if (.NOT. stimStarted_onFault(i)%values(j,k)) then
+                       pfBeforeStim(i)%values(j,k) = pf(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1)
+                       faultStimStartTimes(i)%values(j,k) = time-1.d0
+                       stimStarted_onFault(i)%values(j,k) = .TRUE.
+                    end if
+                    
+                    Amx(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1,2) = Amx(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1,2) + penaltyAlpha*maxAval*0.5
+                    Amy(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1,2) = Amy(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1,2) + penaltyAlpha*maxAval*0.5
+
+                    if (time .GT. (stimStartTimes(i)+stimDurs(i))) then ! Pressure dependent leak-off post shut-in
+                        ! Sum up leak-off into fault-zone 
+                        leakOff2Fault = 0.0
+                        do l=1,SIZE(fracReachedFault(i)%values, DIM=2) 
+                            if (fracReachedFault(i)%values(j,l)) then
+                               l_cur = fracMeanPoints_z_idx_start(i,j) + (l-1) + (fracMeanPoints_x_idx(i,j)-1)*jmax
+                               leakOff2Fault = leakOff2Fault + ks(l_cur)/eta * ( 2*x(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+l-1)-x(fracMeanPoints_x_idx(i,j)+1,fracMeanPoints_z_idx_start(i,j)+l-1)-x(fracMeanPoints_x_idx(i,j)-1,fracMeanPoints_z_idx_start(i,j)+l-1) )
+                            end if
+                        end do
+
+                        ! Leak-off contribution into the fault zone
+                        fracPres(i)%values(j,k) = x(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1) - fwid*1.d-3 * leakOff2Fault * h / Sfracs(i)
+
+                        ! Leak-off contribution into the formation
+                        fracPres(i)%values(j,k) = fracPres(i)%values(j,k) + 4*(Hfrac*Lfracs(i)*1d-6)*kRes/eta * (aVinsom_prev(i,j) - x(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1)/dVinsom_prev(i)) * h / Sfracs(i)
+                                            
+                    else ! Pressure boundary condition during stimulation
+
+                       ! Gradual increase in fracture pressure after fracture reaches fault
+                       fracPres(i)%values(j,k) = (stimPressures(i)-pfinit-pfBeforeStim(i)%values(j,k))*dtanh((time-faultStimStartTimes(i)%values(j,k))/tanh_alpha) + pfBeforeStim(i)%values(j,k)
+                        
+                       if (fracPres(i)%values(j,k) .LT. 0) then
+                          write(*,*) "fracture has landed"
+                          write(*,*) "time:", time
+                          write(*,*) "faultstimtime:", faultStimStartTimes(i)%values(j,k)                       
+                          write(*,*) "tanh_alpha:", tanh_alpha
+                          write(*,*) "fracPres:", fracPres(i)%values(j,k)
+                          write(*,*) "pfBeforeStim:",pfBeforeStim(i)%values(j,k)
+                          write(*,*) "stim pressure:",stimPressures(i)
+                          write(*,*) "pfinit:", pfinit
+                          write(*,*) "dtanh:", dtanh((time-faultStimStartTimes(i)%values(j,k))/tanh_alpha)
+                       end if
+
+                    end if ! post-shut-in or co-injection
+
+                    b(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1) = b(fracMeanPoints_x_idx(i,j),fracMeanPoints_z_idx_start(i,j)+k-1) + penaltyAlpha*maxAval*fracPres(i)%values(j,k)
+
+                 end if ! cluster reached or not
+
+              end do ! cluster
+
+              ! Update a, b and I_n of semi-analytical solution for leak-off estimates 
+              aVinsom(i,j) = ( cRes*h*maxval(fracPres(i)%values(j,:))/dVinsom(i) + I_n_prev(i,j) - dVinsom(i)**3/(cRes*h)*(maxval(fracPres(i)%values(j,:))-maxval(fracPres_prev(i)%values(j,:))) ) / (3*dVinsom(i)**2 + cRes*h)
+              bVinsom(i,j) = ( 2*aVinsom(i,j)*dVinsom(i) - maxval(fracPres(i)%values(j,:)) + dVinsom(i)**2/(cRes*h)*(maxval(fracPres(i)%values(j,:))-maxval(fracPres_prev(i)%values(j,:))) ) / (2*dVinsom(i)**2)
+              I_n(i,j) = maxval(fracPres(i)%values(j,:))*dVinsom(i) + aVinsom(i,j)*dVinsom(i)**2 + 2*bVinsom(i,j)*dVinsom(i)**3
+
+           end do ! stage
+           
        end if
     end do
 
@@ -1667,8 +1930,46 @@ end subroutine coordinate3dp
   
       end do
 
-      if(niter==itermax) write(*,*) "Maximum iteration"
       100 pfnew=x
+
+      if(niter==itermax) then
+        write(*,*) "Maximum iteration reached for CG at time: ", time
+        write(*,*) 'Any Inf in b? ', any(abs(b) > huge(1.0e8))
+
+        call build_sparse_system(Amx, Amy, b, nnz, iaSparse, jaSparse, aSparse, b1D)
+        call check_csr(iaSparse, jaSparse, imax*jmax)
+
+        write(fname,'("output/iaSparse.dat")')
+        open(nout(9),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(9)) iaSparse
+
+        write(fname,'("output/jaSparse.dat")')
+        open(nout(10),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(10)) jaSparse
+
+        write(fname,'("output/aSparse.dat")')
+        open(nout(11),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(11)) aSparse
+
+        write(fname,'("output/bmat.dat")')
+        open(nout(12),file=fname,form='unformatted',access='stream',status='replace')
+        write(nout(12)) b1D
+
+        write(*,*) "Engaging GMRES solver"
+        call gmres_csr_solver(imax*jmax, iaSparse, jaSparse, aSparse, b1D, b1Dtemp, 1000, 1d-8)
+
+        write(*,*) 'Any NaN in b1D? ', any(b1D /= b1D)
+        write(*,*) 'Any Inf in b1D? ', any(abs(b1D) > huge(1.0e8))
+        write(*,*) 'Any Inf in b? ', any(abs(b) > huge(1.0e8))
+
+        do j = 1, jmax
+            do i = 1, imax
+                k = (j-1)*imax + i
+                pfnew(i,j) = b1Dtemp(k)
+            end do
+        end do
+
+      end if
 
     return
     end subroutine
@@ -1845,6 +2146,18 @@ end subroutine coordinate3dp
       !if(load==0)
       hnext=min(hnext,dtmax)
       !hnext=max(0.249d0*ds0/vs,SAFETY*h*(errmax_gb**PGROW))
+
+      ! take small enough time step so that it stops at beginning of a new
+      ! stimulation
+      do i=1,numStages
+        if (stimStartTimes(i) .GT. x+hnext) then
+           ! write(*,*) "Time: ", x
+           ! write(*,*) "Time + dt: ", x + h
+           ! write(*,*) "dt_next: ", hnext
+           ! write(*,*) "hnext_injection: ", stimStartTimes(i)-x-h
+           hnext=min(hnext, stimStartTimes(i)-x-hnext)
+        end if
+      end do
   
       !hnext=min(,1d9)
   
@@ -2091,6 +2404,501 @@ end subroutine coordinate3dp
           heaviside = 0.5  ! or 0.0 or 1.0 depending on your convention
       end if
   end function heaviside
+
+  subroutine build_dense_system(Amx, Amy, b2D, A, b1D)
+    implicit none
+    integer :: i, j, k
+    real(8), intent(in)  :: Amx(:,:,:), Amy(:,:,:), b2D(:,:)
+    real(8), intent(out) :: A(:,:), b1D(:)
+
+    ! Initialize dense matrix and RHS
+    A = 0.0d0
+    b1D = 0.0d0
+
+    ! Loop over all nodes
+    do i = 1, imax
+        do j = 1, jmax
+            k = (j-1)*imax + i  ! 1D index
+
+            ! Dirichlet boundary: outer nodes
+            if (i == 1 .or. i == imax .or. j == 1 .or. j == jmax) then
+                A(k,:) = 0.0d0
+                A(k,k) = 1.0d0
+                b1D(k) = b2D(i,j)  ! prescribed pressure
+            else
+                ! Interior node: fill contributions from Amx and Amy
+
+                ! X-direction
+                if (j > 1)      A(k, k-1)   = Amx(i,j,1)
+                A(k, k)       = Amx(i,j,2) + Amy(i,j,2)
+                if (j < jmax)  A(k, k+1)   = Amx(i,j,3)
+
+                ! Y-direction
+                if (i > 1)      A(k, k-imax) = Amy(i,j,1)
+                if (i < imax)   A(k, k+imax) = Amy(i,j,3)
+
+                ! RHS
+                b1D(k) = b2D(i,j)
+            end if
+        end do
+    end do
+
+  end subroutine build_dense_system
+
+  subroutine build_sparse_system(Amx, Amy, b2D, nnz, iaSparse, jaSparse, aSparse, b1D)
+  implicit none
+  ! Inputs
+  real(8), intent(in) :: Amx(imax,jmax,3)
+  real(8), intent(in) :: Amy(imax,jmax,3)
+  real(8), intent(in) :: b2D(imax,jmax)
+  ! Outputs
+  integer, intent(out) :: nnz
+  integer, allocatable, intent(out) :: iaSparse(:), jaSparse(:)
+  real(8), allocatable, intent(out) :: aSparse(:)
+  real(8), intent(out) :: b1D(imax*jmax)
+
+  integer :: i,j,k,nnz_counter
+  integer :: row
+  integer :: max_nnz_per_row
+  integer, allocatable :: row_counts(:)
+
+  ! Temporary arrays for COO format
+  integer, allocatable :: jaTmp(:)
+  real(8), allocatable :: aTmp(:)
+
+  integer :: total_rows
+  total_rows = imax*jmax
+  max_nnz_per_row = 5   ! 5-point stencil max
+
+  allocate(row_counts(total_rows))
+  row_counts = 0
+
+  ! First pass: count nonzeros per row
+  do j = 1,jmax
+    do i = 1,imax
+      k = i + (j-1)*imax
+      b1D(k) = b2D(i,j)
+
+      if (i==1 .or. i==imax .or. j==1 .or. j==jmax) then
+        ! Dirichlet row: only diagonal
+        row_counts(k) = 1
+      else
+        ! Interior node: 5-point stencil
+        row_counts(k) = 5
+      end if
+    end do
+  end do
+
+  ! Build iaSparse as row pointer
+  allocate(iaSparse(total_rows+1))
+  iaSparse(1) = 1
+  do i = 1,total_rows
+    iaSparse(i+1) = iaSparse(i) + row_counts(i)
+  end do
+
+  nnz = iaSparse(total_rows+1)-1
+  allocate(jaSparse(nnz))
+  allocate(aSparse(nnz))
+
+  ! Fill jaSparse and aSparse
+  do j = 1,jmax
+    do i = 1,imax
+      k = i + (j-1)*imax
+      nnz_counter = iaSparse(k)
+
+      if (i==1 .or. i==imax .or. j==1 .or. j==jmax) then
+        ! Dirichlet: diagonal only
+        jaSparse(nnz_counter) = k
+        aSparse(nnz_counter) = 1.0d0
+      else
+        ! Interior: x-direction
+        jaSparse(nnz_counter  ) = k-1
+        aSparse(nnz_counter) = Amx(i,j,1)
+        nnz_counter = nnz_counter + 1
+
+        jaSparse(nnz_counter  ) = k
+        aSparse(nnz_counter) = Amx(i,j,2) + Amy(i,j,2)  ! center includes y-center
+        nnz_counter = nnz_counter + 1
+
+        jaSparse(nnz_counter  ) = k+1
+        aSparse(nnz_counter) = Amx(i,j,3)
+        nnz_counter = nnz_counter + 1
+
+        ! y-direction
+        jaSparse(nnz_counter  ) = k-imax
+        aSparse(nnz_counter) = Amy(i,j,1)
+        nnz_counter = nnz_counter + 1
+
+        jaSparse(nnz_counter  ) = k+imax
+        aSparse(nnz_counter) = Amy(i,j,3)
+      end if
+    end do
+  end do
+
+  end subroutine build_sparse_system
+
+  subroutine check_csr(ia, ja, n)
+  implicit none
+  integer, intent(in) :: ia(:), ja(:), n
+  integer :: k, nnz
+  if (size(ia) /= n+1) stop 'CSR error: ia size != n+1'
+  if (ia(1) /= 1)      stop 'CSR error: ia(1) must be 1 (1-based)'
+  do k=1,n
+     if (ia(k+1) < ia(k)) stop 'CSR error: ia not nondecreasing'
+  end do
+  nnz = ia(n+1) - 1
+  if (nnz < 0) stop 'CSR error: ia(n+1) < 1'
+  if (size(ja) < nnz) stop 'CSR error: ja too small'
+  if (minval(ja(1:nnz)) < 1 .or. maxval(ja(1:nnz)) > n) stop 'CSR error: ja out of range'
+  end subroutine
+
+subroutine gmres_csr_solver(n, ia, ja, a, b, x, maxit, tol)
+  implicit none
+  integer, intent(in) :: n
+  integer, intent(in) :: ia(:), ja(:)
+  real(8), intent(in) :: a(:), b(:)
+  real(8), intent(out) :: x(:)
+  integer, intent(in), optional :: maxit
+  real(8), intent(in), optional :: tol
+
+  ! Internal variables
+  integer :: i, j, iter
+  integer :: mmax
+  real(8) :: beta, res, alpha
+  real(8) :: tols
+  real(8), allocatable :: r(:), v(:,:), h(:,:), s(:), cs(:), sn(:), y(:)
+  logical :: debug
+  real(8), parameter :: EPS_SMALL = 1.0d-16
+
+  ! Parameters / defaults
+  mmax = 100
+  if (present(maxit)) mmax = maxit
+  tols = 1.0d-8
+  if (present(tol)) tols = tol
+
+  debug = .false.    ! set to .true. for verbose diagnostics
+
+  ! Allocate arrays (sizes chosen to match usage: v(n,0..mmax), h(mmax+1,mmax))
+  allocate(r(n))
+  allocate(v(n,mmax+1))
+  allocate(h(mmax+1,mmax))
+  allocate(s(mmax+1))
+  allocate(cs(mmax))
+  allocate(sn(mmax))
+  allocate(y(mmax))
+
+  ! Initialize arrays to safe values (prevents using uninitialized memory)
+  x = 0.0d0
+  r = 0.0d0
+  v = 0.0d0
+  h = 0.0d0
+  s = 0.0d0
+  cs = 0.0d0
+  sn = 0.0d0
+  y = 0.0d0
+
+  ! Optional CSR sanity check (uncomment if you have check_csr available)
+  if (debug) then
+     call check_csr(ia, ja, n)
+  end if
+
+  !----------------------------
+  ! GMRES algorithm (with breakdown handling)
+  !----------------------------
+  call spmv_csr(n, ia, ja, a, x, r)   ! r = A*x
+  r = b - r
+  beta = norm2(n, r)
+  if (beta == 0.0d0) then
+     if (debug) write(*,*) 'GMRES: initial residual zero; returning x=0'
+     deallocate(r, v, h, s, cs, sn, y)
+     return
+  end if
+
+  v(:,1) = r / beta
+  s = 0.0d0
+  s(1) = beta
+
+  iter = 0
+  do iter = 1, mmax
+     ! Arnoldi: w = A * v(:,iter)
+     call spmv_csr(n, ia, ja, a, v(:,iter), r)
+
+     ! Modified Gram-Schmidt orthogonalization
+     do i = 1, iter
+        h(i,iter) = dot_vec(n, r, v(:,i))
+        call axpy(n, -h(i,iter), v(:,i), r)  ! r = r - h(i,iter)*v(:,i)
+     end do
+
+     h(iter+1,iter) = norm2(n, r)
+
+     ! Check for exact Arnoldi breakdown (new vector is zero)
+     if (h(iter+1,iter) == 0.0d0) then
+        if (debug) write(*,*) 'GMRES: Exact Arnoldi breakdown at iter=', iter
+        ! we do NOT attempt to set v(:,iter+1) - leave it zero/unfilled
+        ! compute residual and exit the outer iteration loop; iter remains
+        ! current
+        exit
+     else
+        v(:,iter+1) = r / h(iter+1,iter)
+     end if
+
+     ! Apply previously computed Givens rotations to the new column h(:,iter)
+     if (iter > 1) then
+        do i = 1, iter-1
+           alpha = cs(i)*h(i,iter) + sn(i)*h(i+1,iter)
+           h(i+1,iter) = -sn(i)*h(i,iter) + cs(i)*h(i+1,iter)
+           h(i,iter) = alpha
+        end do
+     end if
+
+     ! Compute new Givens rotation to eliminate h(iter+1,iter)
+     alpha = sqrt(h(iter,iter)**2 + h(iter+1,iter)**2)
+     if (alpha == 0.0d0) then
+        ! both entries zero: set a trivial rotation (should be rare)
+        cs(iter) = 1.0d0
+        sn(iter) = 0.0d0
+     else
+        cs(iter) = h(iter,iter) / alpha
+        sn(iter) = h(iter+1,iter) / alpha
+     end if
+
+     ! Apply rotation
+     h(iter,iter) = cs(iter)*h(iter,iter) + sn(iter)*h(iter+1,iter)
+     h(iter+1,iter) = 0.0d0
+
+     ! Update s (right-hand side for least squares)
+     s(iter+1) = -sn(iter)*s(iter)
+     s(iter)   = cs(iter)*s(iter)
+
+     ! Compute residual (norm of trailing element)
+     res = abs(s(iter+1))
+     if (debug) write(*,*) 'GMRES: iter=', iter, ' res=', res
+     if (res < tols) then
+        if (debug) write(*,*) 'GMRES: converged at iter=', iter, ' res=', res
+        exit
+     end if
+  end do   ! end GMRES outer iterations
+
+  ! If we exited because iter loop finished at mmax, iter == mmax
+  if (iter >= mmax) then
+     write(*,*) "GMRES did not converge within maxit (", mmax, ")"
+     ! fall through to attempt solve with what we have
+  else
+     if (debug) write(*,*) "GMRES stopped at iter=", iter
+  end if
+
+  !----------------------------
+  ! Safe back-substitution for the (iter x iter) upper triangular system
+  ! h(1:iter,1:iter)
+  ! Solve H(1:iter,1:iter) * y(1:iter) = s(1:iter)
+  !----------------------------
+  if (debug) then
+     write(*,*) 'DEBUG: H diagonal before back-sub:'
+     do i = 1, iter
+        write(*,*) ' i=', i, ' h(i,i)=', h(i,i)
+     end do
+  end if
+
+  ! Copy s => y (only first iter entries are relevant)
+  y(1:iter) = s(1:iter)
+
+  do i = iter, 1, -1
+     if (abs(h(i,i)) < EPS_SMALL) then
+        ! Small / zero diagonal detected. Avoid division by zero.
+        ! We perform a guarded division (add tiny epsilon preserving sign).
+        write(*,*) 'WARNING: small diagonal h(',i,',',i,') = ', h(i,i), &
+                   ' using guarded division with EPS_SMALL=', EPS_SMALL
+        y(i) = y(i) / (h(i,i) + sign(EPS_SMALL, h(i,i)))
+     else
+        y(i) = y(i) / h(i,i)
+     end if
+
+     if (i > 1) then
+        do j = i-1, 1, -1
+           ! extra guard (should never fail if sizes correct)
+           if (j < 1 .or. j > size(y)) then
+              write(*,*) 'ERROR: back-sub bounds failure j=', j, ' size(y)=', size(y)
+              stop 999
+           end if
+           y(j) = y(j) - h(j,i) * y(i)
+        end do
+     end if
+  end do
+
+  !----------------------------
+  ! Update solution x = x + V(:,1:iter) * y(1:iter)
+  !----------------------------
+  do i = 1, iter
+     call axpy(n, y(i), v(:,i), x)
+  end do
+
+  ! Final residual diagnostic (optional)
+  if (debug) then
+     call spmv_csr(n, ia, ja, a, x, r)
+     r = b - r
+     write(*,*) 'DEBUG: final residual norm =', norm2(n, r)
+  end if
+
+  ! Deallocate
+  deallocate(r, v, h, s, cs, sn, y)
+
+end subroutine gmres_csr_solver
+
+! subroutine gmres_csr_solver(n, ia, ja, a, b, x, maxit, tol)
+  ! implicit none
+  ! integer, intent(in) :: n
+  ! integer, intent(in) :: ia(:), ja(:)
+  ! real(8), intent(in) :: a(:), b(:)
+  ! real(8), intent(out) :: x(:)
+  ! integer, intent(in), optional :: maxit
+  ! real(8), intent(in), optional :: tol
+
+  ! ! Internal variables
+  ! integer :: i, j, iter
+  ! integer :: mmax
+  ! real(8) :: beta, res, alpha
+  ! real(8) :: tols
+  ! real(8), allocatable :: r(:), v(:,:), h(:,:), s(:), cs(:), sn(:), y(:)
+
+  ! ! Parameters
+  ! mmax = 100
+  ! if (present(maxit)) mmax = maxit
+  ! tols = 1.0d-8
+  ! if (present(tol)) tols = tol
+
+  ! ! Allocate arrays
+  ! allocate(r(n), v(n,mmax+1))
+  ! allocate(h(mmax+1,mmax))
+  ! allocate(s(mmax+1), cs(mmax), sn(mmax), y(mmax))
+
+  ! ! Initialize
+  ! x = 0.0d0
+
+  ! !----------------------------
+  ! ! GMRES algorithm
+  ! !----------------------------
+  ! call spmv_csr(n, ia, ja, a, x, r)
+  ! r = b - r
+  ! beta = norm2(n,r)
+  ! if (beta == 0.0d0) return
+  ! v(:,1) = r / beta
+  ! s = 0.0d0
+  ! s(1) = beta
+
+  ! do iter = 1, mmax
+  !    ! Arnoldi
+  !    call spmv_csr(n, ia, ja, a, v(:,iter), r)
+  !    do i = 1, iter
+  !       h(i,iter) = dot_vec(n, r, v(:,i))
+  !       call axpy(n, -h(i,iter), v(:,i), r)
+  !    end do
+  !    h(iter+1,iter) = norm2(n,r)
+  !    if (h(iter+1,iter) /= 0.0d0) then
+  !       v(:,iter+1) = r / h(iter+1,iter)
+  !    end if
+
+  !    ! Apply Givens rotations
+  !    do i = 1, iter-1
+  !       alpha = cs(i)*h(i,iter) + sn(i)*h(i+1,iter)
+  !       h(i+1,iter) = -sn(i)*h(i,iter) + cs(i)*h(i+1,iter)
+  !       h(i,iter) = alpha
+  !    end do
+
+  !    ! Compute new rotation
+  !    alpha = sqrt(h(iter,iter)**2 + h(iter+1,iter)**2)
+  !    if (alpha == 0.0d0) then
+  !       cs(iter) = 1.0d0
+  !       sn(iter) = 0.0d0
+  !    else
+  !       cs(iter) = h(iter,iter)/alpha
+  !       sn(iter) = h(iter+1,iter)/alpha
+  !    end if
+  !    h(iter,iter) = cs(iter)*h(iter,iter) + sn(iter)*h(iter+1,iter)
+  !    h(iter+1,iter) = 0.0d0
+  !    s(iter+1) = -sn(iter)*s(iter)
+  !    s(iter) = cs(iter)*s(iter)
+
+  !    res = abs(s(iter+1))
+  !    if (res < tols) exit
+  ! end do
+
+  ! if (iter==mmax) then
+  !    write(*,*) "GMRES did not converge"
+  !    STOP 1
+  ! else
+  !    write(*,*) "GMRES successful"
+  ! end if
+
+  ! ! Solve upper triangular system
+  ! y(1:iter) = s(1:iter)
+  ! do i = iter,1,-1
+  !    y(i) = y(i)/h(i,i)
+  !    do j = i-1,1,-1
+  !       y(j) = y(j) - h(j,i)*y(i)
+  !    end do
+  ! end do
+
+  ! ! Update solution
+  ! do i = 1, iter
+  !    call axpy(n, y(i), v(:,i), x)
+  ! end do
+
+  ! ! Deallocate
+  ! deallocate(r, v, h, s, cs, sn, y)
+
+! end subroutine gmres_csr_solver
+
+!========================
+! Helper subroutines
+!========================
+
+subroutine spmv_csr(n, ia, ja, a, x, y)
+  integer, intent(in) :: n
+  integer, intent(in) :: ia(:), ja(:)
+  real(8), intent(in) :: a(:), x(:)
+  real(8), intent(out) :: y(:)
+  integer :: i, k
+  y = 0.0d0
+  do i = 1, n
+     do k = ia(i), ia(i+1)-1
+        y(i) = y(i) + a(k) * x(ja(k))
+     end do
+  end do
+end subroutine spmv_csr
+
+real(8) function dot_vec(n, x, y)
+  integer, intent(in) :: n
+  real(8), intent(in) :: x(:), y(:)
+  integer :: i
+  dot_vec = 0.0d0
+  do i = 1, n
+     dot_vec = dot_vec + x(i)*y(i)
+  end do
+end function dot_vec
+
+subroutine axpy(n, alpha, x, y)
+  integer, intent(in) :: n
+  real(8), intent(in) :: alpha
+  real(8), intent(in) :: x(:)
+  real(8), intent(inout) :: y(:)
+  integer :: i
+  do i = 1, n
+     y(i) = y(i) + alpha*x(i)
+  end do
+end subroutine axpy
+
+real(8) function norm2(n, x)
+  integer, intent(in) :: n
+  real(8), intent(in) :: x(:)
+  integer :: i
+  norm2 = 0.0d0
+  do i = 1, n
+     norm2 = norm2 + x(i)**2
+  end do
+  norm2 = sqrt(norm2)
+end function norm2
+
+
 
 !   function rtnewt(prev,eps,nst,p,t0,sum)
 !     integer::j

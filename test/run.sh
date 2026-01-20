@@ -2,7 +2,7 @@
 #SBATCH --job-name=inPtest
 #SBATCH --output=test_job.%j.out
 #SBATCH --error=test_job.%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=10:00:00
 #SBATCH -p serc
 #SBATCH -c 10
 #SBATCH --mem=8GB
@@ -18,17 +18,27 @@ echo $SLURM_JOB_NAME
 ### Define number of processors
 echo This job has allocated $SLURM_NPROCS cpus
 
-### Make output and back up directories 
-ODIR=/oak/stanford/groups/tchelepi/kimtaeho/Fervo/hbi/3IstimTest/test/output
-# IDIR=/oak/stanford/groups/tchelepi/kimtaeho/Fervo/hbi/3IstimTest/test/input
-if [ ! -e $ODIR ]; then
-    mkdir $ODIR 
+# Get the current and parent folder names
+folder_name=$(basename "$PWD")
+parent_folder=$(basename "$(dirname "$PWD")")
+
+# Make output and backup directories
+PDIR="/oak/stanford/groups/tchelepi/kimtaeho/Fervo/hbi"
+ODIR="${PDIR}/${parent_folder}/${folder_name}"
+
+if [ ! -d "$PDIR/${parent_folder}" ]; then
+    mkdir -p "$PDIR/${parent_folder}"
 fi
+
+if [ ! -d "$ODIR" ]; then
+    mkdir -p "$ODIR"
+fi
+
+echo "Output directory: $ODIR"
 
 # if [ ! -e $IDIR ]; then
 #     mkdir $IDIR 
 # fi
-
 
 rm -r output
 ln -s $ODIR output
